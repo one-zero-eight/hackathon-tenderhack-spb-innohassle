@@ -21,10 +21,11 @@ services:
         ports:
             - "127.0.0.1:8080:8080"
         volumes:
-            - .:/app
+            - ./frontend:/app
             - /app/node_modules
         environment:
             - VITE_DEV_SERVER_HOST=0.0.0.0
+            - VITE_DEV_PROXY_TARGET=http://api:8000
         networks:
             - app_network
 

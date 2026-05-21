@@ -1,0 +1,16 @@
+name: Migrate databases locally
+
+on:
+    workflow_dispatch:
+
+jobs:
+    migrate:
+        runs-on: deploy
+
+        steps:
+            - name: Restart stack and run migrations
+              run: |
+                  set -eu
+                  cd /srv/apps/tenderhack-spb
+                  docker compose --env-file .env down -v
+                  docker compose --env-file .env up --build -d

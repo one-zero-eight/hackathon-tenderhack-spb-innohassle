@@ -1,0 +1,19 @@
+name: Deploy locally
+
+on:
+    push:
+        branches: [main]
+    workflow_dispatch:
+
+jobs:
+    deploy:
+        runs-on: deploy
+
+        steps:
+            - name: Redeploy from mounted app directory
+              run: |
+                  set -eu
+                  cd /srv/apps/tenderhack-spb
+                  git fetch --all
+                  git reset --hard origin/main
+                  docker compose --env-file .env up -d --build --force-recreate

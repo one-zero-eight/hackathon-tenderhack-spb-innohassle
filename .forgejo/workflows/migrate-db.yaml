@@ -12,5 +12,5 @@ jobs:
               run: |
                   set -eu
                   cd /srv/apps/tenderhack-spb
-                  docker compose --env-file .env down -v
-                  docker compose --env-file .env up --build -d
+                  docker compose -f prod-compose.yaml --env-file .env down -v
+                  docker compose -f prod-compose.yaml --env-file .env up --build -d

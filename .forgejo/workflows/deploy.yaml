@@ -16,4 +16,4 @@ jobs:
                   cd /srv/apps/tenderhack-spb
                   git fetch --all
                   git reset --hard origin/main
-                  docker compose --env-file .env up -d --build --force-recreate
+                  docker compose -f prod-compose.yaml --env-file .env up -d --build --force-recreate

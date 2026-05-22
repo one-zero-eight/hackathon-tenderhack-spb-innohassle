@@ -17,3 +17,6 @@ public.pem
 
 ### OS ###
 .DS_Store
+
+### Debug ###
+wb_error_debug.png

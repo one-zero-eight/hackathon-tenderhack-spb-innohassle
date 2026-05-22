@@ -57,8 +57,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from src.api.auth.routes import router as auth_router  # noqa: E402
-from src.api.user.routes import router as user_router  # noqa: E402
+from src.api.prices.routes import router as prices_router  # noqa: E402
 
-app.include_router(auth_router)
-app.include_router(user_router)
+app.include_router(prices_router)

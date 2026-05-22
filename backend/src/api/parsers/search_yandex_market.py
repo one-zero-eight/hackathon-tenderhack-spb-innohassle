@@ -2,14 +2,20 @@
 Yandex Market Price Search Script
 Uses requests to fetch search page and parse embedded JSON-LD data.
 """
-import requests
-import sys
+import asyncio
 import json
 import re
 
+import requests
 
-def search_yandex_market(query: str, limit: int = 5) -> list[dict]:
-    """Search Yandex Market via HTML + JSON-LD parsing."""
+
+async def parse_yandex_market_products(query: str, limit: int = 5) -> list[dict]:
+    """Parse Yandex Market search results asynchronously."""
+    return await asyncio.to_thread(_parse_yandex_market_products_sync, query, limit)
+
+
+def _parse_yandex_market_products_sync(query: str, limit: int = 5) -> list[dict]:
+    """Parse Yandex Market search results via HTML + JSON-LD."""
     url = "https://market.yandex.ru/search"
     params = {"text": query}
     
@@ -97,37 +103,3 @@ def search_yandex_market(query: str, limit: int = 5) -> list[dict]:
                 pass
     
     return results[:limit]
-
-
-def main():
-    query = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "iPhone 15"
-    print(f"🔍 Searching Yandex Market for: '{query}'\n")
-    
-    try:
-        results = search_yandex_market(query)
-        
-        if not results:
-            print("❌ No products found via HTML parsing.")
-            print("   Yandex Market has strong anti-bot protection (SmartCaptcha).")
-            print("   Consider using Playwright with stealth settings + proxies.")
-            return
-        
-        print(f"✅ Found {len(results)} products:\n")
-        for i, p in enumerate(results, 1):
-            print(f"{'─' * 60}")
-            print(f"  #{i}: {p['name']}")
-            if p['brand'] != 'N/A':
-                print(f"  🏷️  Brand: {p['brand']}")
-            print(f"  💰 Price: {p['sale_price']:,.0f} ₽")
-            print(f"  🔗 {p['url']}")
-        print(f"\n{'─' * 60}")
-        print(f"\n📋 Raw JSON (first result):")
-        print(json.dumps(results[0], ensure_ascii=False, indent=2))
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-if __name__ == "__main__":
-    main()

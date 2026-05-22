@@ -1,3 +1,8 @@
 # tenderhack-spb
 
-- Тут был Mikyss
+## Запуск
+
+Поднимите docker compose:
+```
+docker compose up -d
+```

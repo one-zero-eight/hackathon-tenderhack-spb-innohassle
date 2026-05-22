@@ -39,14 +39,11 @@ services:
         restart: always
         ports:
             - "127.0.0.1:8000:8000"
-        volumes:
-            - type: bind
-              source: ./backend/settings.yaml
-              target: /app/settings.yaml
-              bind:
-                  create_host_path: false
         networks:
             - app_network
+        configs:
+            - source: backend_settings
+              target: /app/settings.yaml
 
     postgres:
         image: "postgres:17.1"
@@ -71,3 +68,16 @@ volumes:
 
 networks:
     app_network:
+
+configs:
+    backend_settings:
+        content: |
+            $$schema: "./settings.schema.yaml"
+            api_settings:
+                db_url: "postgresql+asyncpg://postgres:postgres@postgres:5432/postgres"
+                secret_key: ${SECRET_KEY:-meow}
+                token_expiration_in_minutes: 60
+
+            auth_settings:
+                access_token_ttl_minutes: 60
+                refresh_token_ttl_days: 7

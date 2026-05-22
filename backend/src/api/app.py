@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi_derive_responses import AutoDeriveResponsesAPIRoute
 from fastapi_swagger import patch_fastapi
 
@@ -13,6 +14,40 @@ app = FastAPI(
 app.router.route_class = AutoDeriveResponsesAPIRoute
 
 patch_fastapi(app)
+
+def _fix_response_headers(node: object) -> None:
+    """HTTPException headers are serialized as plain strings; OpenAPI expects Header objects."""
+    if isinstance(node, dict):
+        headers = node.get("headers")
+        if isinstance(headers, dict):
+            for name, value in list(headers.items()):
+                if isinstance(value, str):
+                    headers[name] = {
+                        "description": value,
+                        "schema": {"type": "string", "example": value},
+                    }
+        for value in node.values():
+            _fix_response_headers(value)
+    elif isinstance(node, list):
+        for item in node:
+            _fix_response_headers(item)
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        openapi_version=app.openapi_version,
+        description=app.description,
+        routes=app.routes,
+    )
+    _fix_response_headers(schema)
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
 
 app.add_middleware(
     CORSMiddleware,

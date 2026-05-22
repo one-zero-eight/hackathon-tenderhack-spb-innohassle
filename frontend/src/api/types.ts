@@ -249,7 +249,7 @@ export interface operations {
                     "application/json": components["schemas"]["TokenResponse"];
                 };
             };
-            /** @description Username already in use OR Email already in use */
+            /** @description Email already in use OR Username already in use */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -434,7 +434,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Username already in use OR Email already in use */
+            /** @description Email already in use OR Username already in use */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -608,7 +608,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Username already in use OR Email already in use */
+            /** @description Email already in use OR Username already in use */
             409: {
                 headers: {
                     [name: string]: unknown;

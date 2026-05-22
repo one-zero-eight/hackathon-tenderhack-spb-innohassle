@@ -10,6 +10,9 @@ from urllib.parse import urljoin
 
 import requests
 
+YANDEX_PAGE_SIZE = 8
+MAX_YANDEX_PAGES = 20
+
 
 async def parse_yandex_market_products(query: str, limit: int = 5, skip: int = 0) -> list[dict]:
     """Parse Yandex Market search results asynchronously."""
@@ -17,10 +20,7 @@ async def parse_yandex_market_products(query: str, limit: int = 5, skip: int = 0
 
 
 def _parse_yandex_market_products_sync(query: str, limit: int = 5, skip: int = 0) -> list[dict]:
-    """Parse Yandex Market search results via HTML + JSON-LD."""
-    url = "https://market.yandex.ru/search"
-    params = {"text": query}
-    
+    """Parse Yandex Market search results via HTML + embedded API state."""
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -31,17 +31,51 @@ def _parse_yandex_market_products_sync(query: str, limit: int = 5, skip: int = 0
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
     }
-    
-    response = requests.get(url, params=params, headers=headers, timeout=15)
-    response.raise_for_status()
-    html = response.text
-    apiary_results = _parse_apiary_results(html, limit, skip)
+
+    target_count = skip + limit
+    max_pages = min(
+        MAX_YANDEX_PAGES,
+        max(1, (target_count + YANDEX_PAGE_SIZE - 1) // YANDEX_PAGE_SIZE + 2),
+    )
+    results = []
+    seen_products = set()
+
+    with requests.Session() as session:
+        for page in range(1, max_pages + 1):
+            params = {"text": query}
+            if page > 1:
+                params["page"] = page
+
+            response = session.get("https://market.yandex.ru/search", params=params, headers=headers, timeout=15)
+            response.raise_for_status()
+
+            page_results = _parse_yandex_market_page(response.text, target_count)
+            if not page_results:
+                break
+
+            previous_count = len(results)
+            for product in page_results:
+                product_key = product.get("url") or f"{product.get('name')}:{product.get('sale_price')}"
+                if product_key in seen_products:
+                    continue
+                seen_products.add(product_key)
+                results.append(product)
+                if len(results) >= target_count:
+                    return results[skip:target_count]
+
+            if len(results) == previous_count:
+                break
+
+    return results[skip:target_count]
+
+
+def _parse_yandex_market_page(html: str, limit: int) -> list[dict]:
+    apiary_results = _parse_apiary_results(html, limit)
     if apiary_results:
         return apiary_results
 
     results = []
     seen_urls = set()
-    skipped = 0
     
     # Strategy 1: JSON-LD
     jsonld_matches = re.findall(
@@ -68,9 +102,6 @@ def _parse_yandex_market_products_sync(query: str, limit: int = 5, skip: int = 0
                 url = offer.get("url", "")
                 if price > 0 and url not in seen_urls:
                     seen_urls.add(url)
-                    if skipped < skip:
-                        skipped += 1
-                        continue
                     results.append({
                         "name": offer.get("name", "N/A"),
                         "brand": (offer.get("brand", {}).get("name", "N/A")
@@ -109,9 +140,6 @@ def _parse_yandex_market_products_sync(query: str, limit: int = 5, skip: int = 0
                                 url = item.get("url", "")
                                 if price and url not in seen_urls:
                                     seen_urls.add(url)
-                                    if skipped < skip:
-                                        skipped += 1
-                                        continue
                                     results.append({
                                         "name": item.get("title", "N/A"),
                                         "brand": item.get("brand", "N/A"),

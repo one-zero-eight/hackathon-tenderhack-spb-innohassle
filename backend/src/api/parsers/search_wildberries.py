@@ -12,6 +12,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 CHROME_EXECUTABLE_PATH = "/usr/bin/google-chrome"
+MAX_SCROLL_ATTEMPTS = 30
+SCROLL_PAUSE_SECONDS = 1
 
 
 async def parse_wildberries_products(keyword: str, limit: int = 5, skip: int = 0) -> list[dict]:
@@ -54,7 +56,7 @@ def _parse_wildberries_products_sync(keyword: str, limit: int = 5, skip: int = 0
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "article, .product-card")))
             time.sleep(2)
 
-            product_cards = driver.find_elements(By.CSS_SELECTOR, "article, .product-card")
+            product_cards = _load_product_cards(driver, skip + limit)
             products = []
             skipped = 0
             for card in product_cards:
@@ -77,6 +79,30 @@ def _parse_wildberries_products_sync(keyword: str, limit: int = 5, skip: int = 0
 
     finally:
         display.stop()
+
+
+def _load_product_cards(driver, target_count: int):
+    previous_count = 0
+    stable_attempts = 0
+
+    for _ in range(MAX_SCROLL_ATTEMPTS):
+        product_cards = driver.find_elements(By.CSS_SELECTOR, "article, .product-card")
+        if len(product_cards) >= target_count:
+            return product_cards
+
+        if len(product_cards) == previous_count:
+            stable_attempts += 1
+        else:
+            stable_attempts = 0
+
+        if stable_attempts >= 3:
+            return product_cards
+
+        previous_count = len(product_cards)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(SCROLL_PAUSE_SECONDS)
+
+    return driver.find_elements(By.CSS_SELECTOR, "article, .product-card")
 
 
 def _parse_product_card(card) -> dict:

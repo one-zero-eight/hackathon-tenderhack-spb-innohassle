@@ -19,6 +19,7 @@ dependencies = [
     "python-jose>=3.5.0",
     "python-multipart>=0.0.20",
     "pyyaml>=6.0.2",
+    "requests>=2.34.2",
     "ruff>=0.12.11",
     "sqlalchemy>=2.0.43",
     "typer>=0.17.4",

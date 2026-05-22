@@ -1,0 +1,14 @@
+.git
+.agents
+.codex
+.idea
+.pytest_cache
+.ruff_cache
+.venv
+venv
+__pycache__
+*.py[cod]
+*.log
+.DS_Store
+server_error_debug.png
+wb_error_debug.png

@@ -11,12 +11,12 @@ from urllib.parse import urljoin
 import requests
 
 
-async def parse_yandex_market_products(query: str, limit: int = 5) -> list[dict]:
+async def parse_yandex_market_products(query: str, limit: int = 5, skip: int = 0) -> list[dict]:
     """Parse Yandex Market search results asynchronously."""
-    return await asyncio.to_thread(_parse_yandex_market_products_sync, query, limit)
+    return await asyncio.to_thread(_parse_yandex_market_products_sync, query, limit, skip)
 
 
-def _parse_yandex_market_products_sync(query: str, limit: int = 5) -> list[dict]:
+def _parse_yandex_market_products_sync(query: str, limit: int = 5, skip: int = 0) -> list[dict]:
     """Parse Yandex Market search results via HTML + JSON-LD."""
     url = "https://market.yandex.ru/search"
     params = {"text": query}
@@ -35,12 +35,13 @@ def _parse_yandex_market_products_sync(query: str, limit: int = 5) -> list[dict]
     response = requests.get(url, params=params, headers=headers, timeout=15)
     response.raise_for_status()
     html = response.text
-    apiary_results = _parse_apiary_results(html, limit)
+    apiary_results = _parse_apiary_results(html, limit, skip)
     if apiary_results:
         return apiary_results
 
     results = []
     seen_urls = set()
+    skipped = 0
     
     # Strategy 1: JSON-LD
     jsonld_matches = re.findall(
@@ -67,6 +68,9 @@ def _parse_yandex_market_products_sync(query: str, limit: int = 5) -> list[dict]
                 url = offer.get("url", "")
                 if price > 0 and url not in seen_urls:
                     seen_urls.add(url)
+                    if skipped < skip:
+                        skipped += 1
+                        continue
                     results.append({
                         "name": offer.get("name", "N/A"),
                         "brand": (offer.get("brand", {}).get("name", "N/A")
@@ -105,6 +109,9 @@ def _parse_yandex_market_products_sync(query: str, limit: int = 5) -> list[dict]
                                 url = item.get("url", "")
                                 if price and url not in seen_urls:
                                     seen_urls.add(url)
+                                    if skipped < skip:
+                                        skipped += 1
+                                        continue
                                     results.append({
                                         "name": item.get("title", "N/A"),
                                         "brand": item.get("brand", "N/A"),
@@ -122,7 +129,7 @@ def _parse_yandex_market_products_sync(query: str, limit: int = 5) -> list[dict]
     return results[:limit]
 
 
-def _parse_apiary_results(html: str, limit: int) -> list[dict]:
+def _parse_apiary_results(html: str, limit: int, skip: int = 0) -> list[dict]:
     entities = _extract_apiary_entities(html)
     if not entities:
         return []
@@ -138,6 +145,7 @@ def _parse_apiary_results(html: str, limit: int) -> list[dict]:
     visible_ids = _get_visible_entity_ids(entities)
     results = []
     seen_urls = set()
+    skipped = 0
 
     for visible_id in visible_ids:
         visible_entity = visible_entities.get(str(visible_id))
@@ -176,6 +184,9 @@ def _parse_apiary_results(html: str, limit: int) -> list[dict]:
         if url in seen_urls:
             continue
         seen_urls.add(url)
+        if skipped < skip:
+            skipped += 1
+            continue
 
         vendor_id = offer.get("vendorId") or product.get("vendorId")
         vendor = vendors.get(str(vendor_id), {})

@@ -6,6 +6,7 @@ from src.schemas.pydantic_base import BaseSchema
 class PriceSearchRequest(BaseSchema):
     query: str = Field(..., min_length=1)
     limit: int = Field(default=5, ge=1, le=20)
+    skip: int = Field(default=0, ge=0)
 
 
 class ProductPrice(BaseSchema):

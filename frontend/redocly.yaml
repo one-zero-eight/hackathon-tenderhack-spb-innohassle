@@ -1,0 +1,6 @@
+apis:
+  api:
+    root: http://localhost:8000/openapi.json
+    x-openapi-ts:
+      output: ./src/api/types.ts
+      #  --root-types --enum

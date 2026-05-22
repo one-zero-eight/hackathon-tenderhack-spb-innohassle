@@ -100,6 +100,16 @@ yarn dev --port 8080
 
 5. Open app [http://localhost:8080](http://localhost:8080)
 
+### OpenAPI types
+
+With the API running (`docker compose up` publishes it on port 8000):
+
+```bash
+pnpm gen:api
+```
+
+Types are generated from `redocly.yaml` (remote URL `http://localhost:8000/openapi.json`).
+
 > [!IMPORTANT]
 > Route files are auto-generated. A system restart may be required after initial setup to ensure the router correctly refreshes its file mapping.
 

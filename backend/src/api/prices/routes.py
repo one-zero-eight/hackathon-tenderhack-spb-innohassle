@@ -3,7 +3,7 @@ import asyncio
 from fastapi import APIRouter
 from fastapi_derive_responses import AutoDeriveResponsesAPIRoute
 
-from src.api.parsers import parse_wildberries_price, parse_yandex_market_products
+from src.api.parsers import parse_wildberries_products, parse_yandex_market_products
 from src.schemas import MarketplacePriceResult, PriceSearchRequest, PriceSearchResponse, ProductPrice
 
 router = APIRouter(prefix="/prices", tags=["Prices"], route_class=AutoDeriveResponsesAPIRoute)
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/prices", tags=["Prices"], route_class=AutoDeriveResp
 async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
     yandex_result, wildberries_result = await asyncio.gather(
         parse_yandex_market_products(payload.query, payload.limit),
-        parse_wildberries_price(payload.query),
+        parse_wildberries_products(payload.query, payload.limit),
         return_exceptions=True,
     )
 
@@ -47,18 +47,24 @@ def _build_yandex_market_result(result: list[dict] | BaseException) -> Marketpla
     return MarketplacePriceResult(source=source, prices=prices)
 
 
-def _build_wildberries_result(result: dict | BaseException) -> MarketplacePriceResult:
+def _build_wildberries_result(result: list[dict] | BaseException) -> MarketplacePriceResult:
     source = "Wildberries"
     if isinstance(result, BaseException):
         return MarketplacePriceResult(source=source, prices=[], error=str(result))
 
-    if result.get("error"):
-        details = result.get("details")
-        error = f"{result['error']}: {details}" if details else str(result["error"])
-        return MarketplacePriceResult(source=source, prices=[], error=error)
-
-    price = result.get("price")
-    prices = [ProductPrice(source=source, price=float(price))] if price is not None else []
+    prices = [
+        ProductPrice(
+            source=source,
+            name=item.get("name"),
+            brand=item.get("brand"),
+            price=float(item["sale_price"]),
+            original_price=_optional_float(item.get("original_price")),
+            url=_optional_str(item.get("url")),
+            image_url=_optional_str(item.get("image_url")),
+        )
+        for item in result
+        if item.get("sale_price") is not None
+    ]
     return MarketplacePriceResult(source=source, prices=prices)
 
 

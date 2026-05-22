@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import time
 from urllib.parse import quote_plus
 
@@ -10,12 +11,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 
-async def parse_wildberries_price(keyword: str) -> dict:
-    """Parse the first Wildberries product price asynchronously."""
-    return await asyncio.to_thread(_parse_wildberries_price_sync, keyword)
+async def parse_wildberries_products(keyword: str, limit: int = 5) -> list[dict]:
+    """Parse Wildberries search results asynchronously."""
+    return await asyncio.to_thread(_parse_wildberries_products_sync, keyword, limit)
 
 
-def _parse_wildberries_price_sync(keyword: str) -> dict:
+def _parse_wildberries_products_sync(keyword: str, limit: int = 5) -> list[dict]:
     # Hide the real desktop
     leaky_vars = ["WAYLAND_DISPLAY", "XDG_SESSION_TYPE", "DBUS_SESSION_BUS_ADDRESS"]
     for var in leaky_vars:
@@ -44,17 +45,68 @@ def _parse_wildberries_price_sync(keyword: str) -> dict:
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "article, .product-card")))
             time.sleep(2)
 
-            first_product = driver.find_element(By.CSS_SELECTOR, "article, .product-card")
-            price_element = first_product.find_element(By.XPATH, './/*[contains(text(), "₽")]')
-            clean_price = "".join(filter(str.isdigit, price_element.text))
-
-            return {"marketplace": "Wildberries", "price": int(clean_price)}
+            product_cards = driver.find_elements(By.CSS_SELECTOR, "article, .product-card")
+            return [_parse_product_card(card) for card in product_cards[:limit]]
 
         except Exception as e:
             driver.save_screenshot("server_error_debug.png")
-            return {"marketplace": "Wildberries", "error": "Failed to scrape", "details": str(e)}
+            raise RuntimeError(f"Failed to scrape Wildberries: {e}") from e
         finally:
             driver.quit()
 
     finally:
         display.stop()
+
+
+def _parse_product_card(card) -> dict:
+    price_text = _find_text(card, ".price__lower-price, .price__wrap, .product-card__price")
+    original_price_text = _find_text(card, "del, .price__wrap del, .product-card__price-old")
+
+    link = _find_attribute(card, "a.product-card__link, a[href*='/catalog/']", "href")
+    image_url = _find_attribute(card, "img", "src") or _find_attribute(card, "img", "data-src")
+
+    return {
+        "name": _clean_name(_find_text(card, ".product-card__name, .goods-name")),
+        "brand": _clean_text(_find_text(card, ".product-card__brand, .brand-name")),
+        "sale_price": _parse_price(price_text),
+        "original_price": _parse_price(original_price_text),
+        "url": link,
+        "image_url": image_url,
+        "source": "Wildberries",
+    }
+
+
+def _find_text(card, selector: str) -> str | None:
+    try:
+        text = card.find_element(By.CSS_SELECTOR, selector).text
+    except Exception:
+        return None
+    return _clean_text(text)
+
+
+def _find_attribute(card, selector: str, attribute: str) -> str | None:
+    try:
+        value = card.find_element(By.CSS_SELECTOR, selector).get_attribute(attribute)
+    except Exception:
+        return None
+    return _clean_text(value)
+
+
+def _parse_price(value: str | None) -> int | None:
+    if not value:
+        return None
+    price_match = re.search(r"(\d[\d\s\u00a0]*)\s*₽", value)
+    clean_price = "".join(filter(str.isdigit, price_match.group(1) if price_match else value))
+    return int(clean_price) if clean_price else None
+
+
+def _clean_name(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value.removeprefix("/").strip() or None
+
+
+def _clean_text(value: str | None) -> str | None:
+    if not value:
+        return None
+    return " ".join(value.split()) or None

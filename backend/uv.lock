@@ -85,6 +85,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "bcrypt" },
     { name = "colorlog" },
+    { name = "fake-useragent" },
     { name = "fastapi" },
     { name = "fastapi-derive-responses" },
     { name = "fastapi-swagger" },
@@ -100,11 +101,14 @@ dependencies = [
     { name = "pyyaml" },
     { name = "requests" },
     { name = "ruff" },
+    { name = "selenium" },
+    { name = "selenium-stealth" },
     { name = "setuptools" },
     { name = "sqlalchemy" },
     { name = "typer" },
     { name = "undetected-chromedriver" },
     { name = "uvicorn" },
+    { name = "webdriver-manager" },
 ]
 
 [package.metadata]
@@ -113,6 +117,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "bcrypt", specifier = ">=4.3.0" },
     { name = "colorlog", specifier = ">=6.9.0" },
+    { name = "fake-useragent", specifier = ">=2.0.3" },
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "fastapi-derive-responses", specifier = ">=0.1.4" },
     { name = "fastapi-swagger", specifier = ">=0.3.29" },
@@ -128,11 +133,14 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "ruff", specifier = ">=0.12.11" },
+    { name = "selenium", specifier = ">=4.25.0" },
+    { name = "selenium-stealth", specifier = ">=1.0.6" },
     { name = "setuptools", specifier = ">=82.0.1" },
     { name = "sqlalchemy", specifier = ">=2.0.43" },
     { name = "typer", specifier = ">=0.17.4" },
     { name = "undetected-chromedriver", specifier = ">=3.5.5" },
     { name = "uvicorn", specifier = ">=0.35.0" },
+    { name = "webdriver-manager", specifier = ">=4.0.2" },
 ]
 
 [[package]]
@@ -317,6 +325,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f5/22/900cb125c76b7aaa450ce02fd727f452243f2e91a61af068b40adba60ea9/email_validator-2.3.0.tar.gz", hash = "sha256:9fc05c37f2f6cf439ff414f8fc46d917929974a82244c20eb10231ba60c54426", size = 51238, upload-time = "2025-08-26T13:09:06.831Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/de/15/545e2b6cf2e3be84bc1ed85613edd75b8aea69807a71c26f4ca6a9258e82/email_validator-2.3.0-py3-none-any.whl", hash = "sha256:80f13f623413e6b197ae73bb10bf4eb0908faf509ad8362c5edeb0be7fd450b4", size = 35604, upload-time = "2025-08-26T13:09:05.858Z" },
+]
+
+[[package]]
+name = "fake-useragent"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/41/43/948d10bf42735709edb5ae51e23297d034086f17fc7279fef385a7acb473/fake_useragent-2.2.0.tar.gz", hash = "sha256:4e6ab6571e40cc086d788523cf9e018f618d07f9050f822ff409a4dfe17c16b2", size = 158898, upload-time = "2025-04-14T15:32:19.238Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/51/37/b3ea9cd5558ff4cb51957caca2193981c6b0ff30bd0d2630ac62505d99d0/fake_useragent-2.2.0-py3-none-any.whl", hash = "sha256:67f35ca4d847b0d298187443aaf020413746e56acd985a611908c73dba2daa24", size = 161695, upload-time = "2025-04-14T15:32:17.732Z" },
 ]
 
 [[package]]
@@ -730,6 +747,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-dotenv"
+version = "1.2.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3", size = 50135, upload-time = "2026-03-01T16:00:26.196Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a", size = 22101, upload-time = "2026-03-01T16:00:25.09Z" },
+]
+
+[[package]]
 name = "python-jose"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -892,6 +918,17 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2d/4a/6d0a4f4a07e2a91511a51398203ee82bf6ce644a448aaa35c59b44aa9531/selenium-4.44.0.tar.gz", hash = "sha256:b03a831fcfcab9d912b4682f60718c48a04560d6c62f7496c16b7498c9a4427e", size = 993133, upload-time = "2026-05-12T22:48:19.246Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1f/bc/885047e975e996cb317db31c4551caa915aafc6befea990f082c7233adc2/selenium-4.44.0-py3-none-any.whl", hash = "sha256:d01ea3e5ecad8149460a765f7cf5177194c21dcc0173093fc05427c289b1bf24", size = 9654291, upload-time = "2026-05-12T22:48:16.836Z" },
+]
+
+[[package]]
+name = "selenium-stealth"
+version = "1.0.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "selenium" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/ac/7877df8b819d54a4e317a093a0a9e0a38d21d884a7250aa713f2f0869442/selenium_stealth-1.0.6-py3-none-any.whl", hash = "sha256:b62da5452aa4a84f29a4dfb21a9696aff20788a7c570dd0b81bc04a940848b97", size = 32195, upload-time = "2020-11-05T15:26:05.24Z" },
 ]
 
 [[package]]
@@ -1084,6 +1121,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5e/42/e0e305207bb88c6b8d3061399c6a961ffe5fbb7e2aa63c9234df7259e9cd/uvicorn-0.35.0.tar.gz", hash = "sha256:bc662f087f7cf2ce11a1d7fd70b90c9f98ef2e2831556dd078d131b96cc94a01", size = 78473, upload-time = "2025-06-28T16:15:46.058Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/e2/dc81b1bd1dcfe91735810265e9d26bc8ec5da45b4c0f6237e286819194c3/uvicorn-0.35.0-py3-none-any.whl", hash = "sha256:197535216b25ff9b785e29a0b79199f55222193d47f820816e7da751e9bc8d4a", size = 66406, upload-time = "2025-06-28T16:15:44.816Z" },
+]
+
+[[package]]
+name = "webdriver-manager"
+version = "4.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "python-dotenv" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f4/1a/12fc5f9e820f09c5c142e6a9275a4efbf6323a14acdead8dbedff98c880e/webdriver_manager-4.1.1.tar.gz", hash = "sha256:3832f4ab2186c86496b5c0a6d362357a294ca8c2be9972b49d089b809e262687", size = 38170, upload-time = "2026-05-18T21:35:52.837Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/04/526b7942f948a08b6d0f6c4d4ad11df16d184460a0d643e196407fecdcb1/webdriver_manager-4.1.1-py3-none-any.whl", hash = "sha256:4cedd217862e3fe324fadf7423fc9757c40af5979dda36493712c6c751224df1", size = 32266, upload-time = "2026-05-18T21:35:51.628Z" },
 ]
 
 [[package]]

@@ -3,7 +3,8 @@ import asyncio
 from fastapi import APIRouter
 from fastapi_derive_responses import AutoDeriveResponsesAPIRoute
 
-from src.api.parsers import parse_wildberries_products, parse_yandex_market_products
+from src.api.parsers import parse_ozon_products, parse_wildberries_price, parse_yandex_market_products
+
 from src.schemas import MarketplacePriceResult, PriceSearchRequest, PriceSearchResponse, ProductPrice
 
 router = APIRouter(prefix="/prices", tags=["Prices"], route_class=AutoDeriveResponsesAPIRoute)
@@ -11,9 +12,10 @@ router = APIRouter(prefix="/prices", tags=["Prices"], route_class=AutoDeriveResp
 
 @router.post("/search")
 async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
-    yandex_result, wildberries_result = await asyncio.gather(
-        parse_yandex_market_products(payload.query, payload.limit, payload.skip, payload.location),
-        parse_wildberries_products(payload.query, payload.limit, payload.skip, payload.location),
+    yandex_result, wildberries_result, ozon_result = await asyncio.gather(
+        parse_yandex_market_products(payload.query, payload.limit),
+        parse_wildberries_price(payload.query),
+        parse_ozon_products(payload.query, payload.limit),
         return_exceptions=True,
     )
 
@@ -22,6 +24,7 @@ async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
         results=[
             _build_yandex_market_result(yandex_result),
             _build_wildberries_result(wildberries_result),
+            _build_ozon_result(ozon_result),
         ],
     )
 
@@ -47,7 +50,26 @@ def _build_yandex_market_result(result: list[dict] | BaseException) -> Marketpla
     return MarketplacePriceResult(source=source, prices=prices)
 
 
-def _build_wildberries_result(result: list[dict] | BaseException) -> MarketplacePriceResult:
+def _build_ozon_result(result: list[dict] | BaseException) -> MarketplacePriceResult:
+    source = "Ozon"
+    if isinstance(result, BaseException):
+        return MarketplacePriceResult(source=source, prices=[], error=str(result))
+
+    prices = [
+        ProductPrice(
+            source=source,
+            name=item.get("name"),
+            price=float(item["sale_price"]),
+            url=_optional_str(item.get("url")),
+            image_url=_optional_str(item.get("image_url")),
+        )
+        for item in result
+        if item.get("sale_price") is not None
+    ]
+    return MarketplacePriceResult(source=source, prices=prices)
+
+
+def _build_wildberries_result(result: dict | BaseException) -> MarketplacePriceResult:
     source = "Wildberries"
     if isinstance(result, BaseException):
         return MarketplacePriceResult(source=source, prices=[], error=str(result))

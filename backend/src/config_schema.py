@@ -1,3 +1,4 @@
+import random
 from pathlib import Path
 
 import yaml
@@ -36,10 +37,35 @@ class AuthSettings(BaseModel):
     "Leeway in seconds for clock skew"
 
 
+class OzonSettings(BaseModel):
+    headless: bool = True
+    "Run Chrome without a visible window"
+    slow: bool = False
+    "Use longer pauses during warmup and scrolling to reduce blocking risk"
+    proxy: str | None = None
+    "Single proxy URL, e.g. socks5://user:pass@host:port"
+    proxies: list[str] = Field(default_factory=list)
+    "Proxy pool; a random entry is used when proxy is not set"
+    page_load_timeout: int = 180
+    "Max seconds to wait for Ozon page load"
+    element_wait_timeout: int = 45
+    "Max seconds to wait for search results and other DOM elements"
+    page_load_retries: int = 4
+    "How many times to retry opening a page after timeout"
+
+    def resolve_proxy(self) -> str | None:
+        if self.proxy:
+            return self.proxy
+        if self.proxies:
+            return random.choice(self.proxies)
+        return None
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(json_schema_extra={"title": "Settings"}, extra="ignore")
     api_settings: ApiSettings
     auth_settings: AuthSettings
+    ozon_settings: OzonSettings = Field(default_factory=OzonSettings)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "Settings":

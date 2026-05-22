@@ -9,3 +9,12 @@ api_settings:
 auth_settings:
   access_token_ttl_minutes: 60
   refresh_token_ttl_days: 7
+
+ozon_settings:
+  headless: true
+  slow: false
+  proxy: null
+  proxies: []
+  page_load_timeout: 180
+  element_wait_timeout: 45
+  page_load_retries: 4

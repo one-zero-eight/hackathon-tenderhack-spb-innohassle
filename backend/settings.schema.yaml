@@ -55,11 +55,48 @@ $defs:
         type: integer
     title: AuthSettings
     type: object
+  OzonSettings:
+    properties:
+      headless:
+        default: true
+        title: Headless
+        type: boolean
+      slow:
+        default: false
+        title: Slow
+        type: boolean
+      proxy:
+        anyOf:
+        - type: string
+        - type: 'null'
+        default: null
+        title: Proxy
+      proxies:
+        items:
+          type: string
+        title: Proxies
+        type: array
+      page_load_timeout:
+        default: 180
+        title: Page Load Timeout
+        type: integer
+      element_wait_timeout:
+        default: 45
+        title: Element Wait Timeout
+        type: integer
+      page_load_retries:
+        default: 4
+        title: Page Load Retries
+        type: integer
+    title: OzonSettings
+    type: object
 properties:
   api_settings:
     $ref: '#/$defs/ApiSettings'
   auth_settings:
     $ref: '#/$defs/AuthSettings'
+  ozon_settings:
+    $ref: '#/$defs/OzonSettings'
 required:
 - api_settings
 - auth_settings

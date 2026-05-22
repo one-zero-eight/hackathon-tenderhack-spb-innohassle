@@ -8,6 +8,7 @@ dependencies = [
     "asyncpg>=0.30.0",
     "bcrypt>=4.3.0",
     "colorlog>=6.9.0",
+    "fake-useragent>=2.0.3",
     "fastapi>=0.116.1",
     "fastapi-derive-responses>=0.1.4",
     "fastapi-swagger>=0.3.29",
@@ -23,11 +24,14 @@ dependencies = [
     "pyyaml>=6.0.2",
     "requests>=2.34.2",
     "ruff>=0.12.11",
+    "selenium>=4.25.0",
+    "selenium-stealth>=1.0.6",
     "setuptools>=82.0.1",
     "sqlalchemy>=2.0.43",
     "typer>=0.17.4",
     "undetected-chromedriver>=3.5.5",
     "uvicorn>=0.35.0",
+    "webdriver-manager>=4.0.2",
 ]
 
 [tool.ruff]

@@ -18,3 +18,4 @@ ozon_settings:
   page_load_timeout: 180
   element_wait_timeout: 45
   page_load_retries: 4
+  fetch_details: false

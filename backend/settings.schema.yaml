@@ -88,6 +88,10 @@ $defs:
         default: 4
         title: Page Load Retries
         type: integer
+      fetch_details:
+        default: false
+        title: Fetch Details
+        type: boolean
     title: OzonSettings
     type: object
 properties:

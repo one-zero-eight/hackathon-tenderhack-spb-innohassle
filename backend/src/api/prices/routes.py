@@ -3,18 +3,28 @@ import asyncio
 from fastapi import APIRouter
 from fastapi_derive_responses import AutoDeriveResponsesAPIRoute
 
-from src.api.parsers import parse_ozon_products, parse_wildberries_price, parse_yandex_market_products
-
+from src.api.parsers import parse_ozon_products, parse_wildberries_products, parse_yandex_market_products
 from src.schemas import MarketplacePriceResult, PriceSearchRequest, PriceSearchResponse, ProductPrice
 
 router = APIRouter(prefix="/prices", tags=["Prices"], route_class=AutoDeriveResponsesAPIRoute)
+
+
+async def _run_browser_parsers(query: str, limit: int) -> tuple[list[dict] | BaseException, list[dict] | BaseException]:
+    """Run Selenium parsers one after another — two Chromes at once are slow and unstable."""
+    results: list[list[dict] | BaseException] = []
+    for parser in (parse_wildberries_products, parse_ozon_products):
+        try:
+            results.append(await parser(query, limit))
+        except BaseException as exc:
+            results.append(exc)
+    return results[0], results[1]
 
 
 @router.post("/search")
 async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
     yandex_result, wildberries_result, ozon_result = await asyncio.gather(
         parse_yandex_market_products(payload.query, payload.limit),
-        parse_wildberries_price(payload.query),
+        parse_wildberries_products(payload.query),
         parse_ozon_products(payload.query, payload.limit),
         return_exceptions=True,
     )
@@ -59,17 +69,16 @@ def _build_ozon_result(result: list[dict] | BaseException) -> MarketplacePriceRe
         ProductPrice(
             source=source,
             name=item.get("name"),
-            price=float(item["sale_price"]),
+            price=_optional_float(item.get("sale_price")),
             url=_optional_str(item.get("url")),
             image_url=_optional_str(item.get("image_url")),
         )
         for item in result
-        if item.get("sale_price") is not None
     ]
     return MarketplacePriceResult(source=source, prices=prices)
 
 
-def _build_wildberries_result(result: dict | BaseException) -> MarketplacePriceResult:
+def _build_wildberries_result(result: list[dict] | BaseException) -> MarketplacePriceResult:
     source = "Wildberries"
     if isinstance(result, BaseException):
         return MarketplacePriceResult(source=source, prices=[], error=str(result))

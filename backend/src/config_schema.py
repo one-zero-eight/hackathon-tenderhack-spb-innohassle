@@ -52,13 +52,16 @@ class OzonSettings(BaseModel):
     "Max seconds to wait for search results and other DOM elements"
     page_load_retries: int = 4
     "How many times to retry opening a page after timeout"
+    fetch_details: bool = False
+    "Open each product page to read price (slower, like CLI --details)"
 
     def resolve_proxy(self) -> str | None:
-        if self.proxy:
-            return self.proxy
-        if self.proxies:
-            return random.choice(self.proxies)
-        return None
+        raw = self.proxy
+        if not raw and self.proxies:
+            raw = random.choice(self.proxies)
+        if not raw:
+            return None
+        return raw if "://" in raw else f"http://{raw}"
 
 
 class Settings(BaseModel):

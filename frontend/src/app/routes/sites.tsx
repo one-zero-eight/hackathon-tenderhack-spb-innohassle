@@ -1,5 +1,5 @@
 import { Link, Outlet, createFileRoute, useNavigate, useRouterState } from '@tanstack/react-router'
-import { IoSearch, IoStar, IoArrowBack } from 'react-icons/io5'
+import { IoSearch, IoStar, IoArrowBack, IoDownloadOutline } from 'react-icons/io5'
 import CitySelect from '@/components/shared/CitySelect'
 import MarketplaceLogoLink from '@/components/shared/MarketplaceLogoLink'
 import { ProductCard, ViewAllCard } from '@/components/shared/ProductCard'
@@ -14,6 +14,7 @@ import { cn } from '@/lib/cn'
 import { splitSiteResults } from '@/lib/mapSearchResults'
 import { getCityLocation, getPopularCities, NO_CITY_OPTION } from '@/lib/geo'
 import { getQueryCorrection } from '@/lib/queryCorrection'
+import { countExportableProducts, exportSitesToCsv } from '@/lib/exportCsv'
 import { formatPrice, formatSiteRating, type SiteResult } from '@/lib/searchResults'
 import { useVisibleProductCount } from '@/lib/useVisibleProductCount'
 import { memo, useEffect, useState } from 'react'
@@ -85,6 +86,8 @@ function SitesPage() {
   const showMarketplaceSkeleton = isLoading && !hasMainProducts
   const showMarketplaceStreaming = isLoading && hasMainProducts
   const showEmpty = hasQuery && !isLoading && !otherLoading && !isError && !otherError && !hasMainProducts && !hasOtherProducts
+  const allSitesForExport = [...mainSiteResults, ...otherSiteResults]
+  const exportableCount = countExportableProducts(allSitesForExport)
 
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault()
@@ -138,9 +141,23 @@ function SitesPage() {
       </header>
 
       <main className="mx-auto max-w-7xl">
-        <div className="mb-5">
-          <p className="text-gray text-sm">Результаты поиска</p>
-          {isLoading && !hasMainProducts ? <div className="bg-pale-blue mt-2 h-8 w-56 max-w-full animate-pulse rounded-lg" /> : <h1 className="text-2xl font-semibold text-black">{effectiveQuery || 'Все товары'}</h1>}
+        <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-gray text-sm">Результаты поиска</p>
+            {isLoading && !hasMainProducts ? <div className="bg-pale-blue mt-2 h-8 w-56 max-w-full animate-pulse rounded-lg" /> : <h1 className="text-2xl font-semibold text-black">{effectiveQuery || 'Все товары'}</h1>}
+          </div>
+          {exportableCount > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="inline-flex items-center gap-2 rounded-xl"
+              onClick={() => exportSitesToCsv(allSitesForExport, { query: effectiveQuery })}
+            >
+              <IoDownloadOutline size={18} />
+              Экспорт CSV ({exportableCount})
+            </Button>
+          )}
         </div>
 
         <div className="space-y-6 last:mb-0">

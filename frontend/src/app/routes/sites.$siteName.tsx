@@ -1,7 +1,7 @@
 import { Link, Outlet, createFileRoute, useRouterState } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { IoArrowBack, IoGridOutline, IoListOutline, IoSearch } from 'react-icons/io5'
+import { IoArrowBack, IoGridOutline, IoListOutline, IoSearch, IoDownloadOutline } from 'react-icons/io5'
 import MarketplaceLogoLink from '@/components/shared/MarketplaceLogoLink'
 import { ProductCard } from '@/components/shared/ProductCard'
 import PriceRangeSlider from '@/components/shared/PriceRangeSlider'
@@ -13,6 +13,7 @@ import { useCity } from '@/hooks/useCity'
 import { findSiteInPriceSearchCache, usePriceSearch } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
 import { getCityLocation, getPopularCities, NO_CITY_OPTION } from '@/lib/geo'
+import { exportSiteProductsToCsv } from '@/lib/exportCsv'
 import { formatPrice, type Product, type SiteKind, type SiteResult } from '@/lib/searchResults'
 
 type CategorySearch = {
@@ -52,6 +53,7 @@ const siteAccent: Record<
     sliderFill: string
     sliderThumb: string
     resetButton: string
+    exportButton: string
   }
 > = {
   ozon: {
@@ -65,6 +67,7 @@ const siteAccent: Record<
     sliderFill: 'bg-blue-600',
     sliderThumb: '[&::-moz-range-thumb]:border-blue-600 [&::-webkit-slider-thumb]:border-blue-600',
     resetButton: 'bg-blue-500 text-white hover:bg-blue-600',
+    exportButton: 'border bg-blue-200/30 border-blue-600 text-blue-600 hover:bg-blue-600/10',
   },
   wildberries: {
     link: 'text-fuchsia-600 hover:text-fuchsia-700',
@@ -77,6 +80,7 @@ const siteAccent: Record<
     sliderFill: 'bg-fuchsia-600',
     sliderThumb: '[&::-moz-range-thumb]:border-fuchsia-600 [&::-webkit-slider-thumb]:border-fuchsia-600',
     resetButton: 'bg-fuchsia-500 text-white hover:bg-fuchsia-600',
+    exportButton: 'border border-fuchsia-600 bg-fuchsia-200/30 text-fuchsia-600 hover:bg-fuchsia-600/10',
   },
   yandex: {
     link: 'text-yellow-700 hover:text-yellow-800',
@@ -89,6 +93,7 @@ const siteAccent: Record<
     sliderFill: 'bg-yellow-500',
     sliderThumb: '[&::-moz-range-thumb]:border-yellow-500 [&::-webkit-slider-thumb]:border-yellow-500',
     resetButton: 'bg-yellow-500 text-white hover:bg-yellow-600',
+    exportButton: 'border border-yellow-600 text-yellow-600 bg-yellow-200/30 hover:bg-yellow-600/10',
   },
   other: {
     link: 'text-main-blue hover:underline',
@@ -101,6 +106,7 @@ const siteAccent: Record<
     sliderFill: 'bg-main-blue',
     sliderThumb: '[&::-moz-range-thumb]:border-main-blue [&::-webkit-slider-thumb]:border-main-blue',
     resetButton: 'border-gray-blue bg-pale-blue text-main-blue hover:bg-gray-blue/30 active:bg-gray-blue/45',
+    exportButton: 'border border-main-blue bg-main-blue/10 text-main-blue hover:bg-main-blue/10',
   },
 }
 
@@ -239,7 +245,19 @@ function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; 
 
         <main className="min-w-0 bg-white p-4 sm:p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <SortDropdown options={sortOptions} value={sort} onChange={(value) => setSort(value as SortValue)} radioRingSelectedClassName={accent.sortRadioRing} radioDotSelectedClassName={accent.sortRadioDot} />
+            <div className="flex flex-wrap items-center gap-3">
+              <SortDropdown options={sortOptions} value={sort} onChange={(value) => setSort(value as SortValue)} radioRingSelectedClassName={accent.sortRadioRing} radioDotSelectedClassName={accent.sortRadioDot} />
+              {products.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => exportSiteProductsToCsv(site, products, { query: q })}
+                  className={cn('bg-pale-blue/45 hover:bg-pale-blue/70 flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium text-black transition-colors', accent.exportButton)}
+                >
+                  <IoDownloadOutline className="shrink-0" size={18} aria-hidden />
+                  <span className="whitespace-nowrap">Экспорт</span>
+                </button>
+              )}
+            </div>
 
             <div className="flex items-center gap-1">
               <button

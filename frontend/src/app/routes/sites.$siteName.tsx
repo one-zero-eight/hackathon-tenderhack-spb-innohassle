@@ -1,4 +1,5 @@
 import { Link, Outlet, createFileRoute, useRouterState } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { IoArrowBack, IoGridOutline, IoListOutline, IoSearch } from 'react-icons/io5'
 import { ProductCard } from '@/components/shared/ProductCard'
@@ -8,7 +9,7 @@ import SortDropdown from '@/components/shared/SortDropdown'
 import Input from '@/components/ui/Input'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useCity } from '@/hooks/useCity'
-import { usePriceSearch } from '@/hooks/usePriceSearch'
+import { findSiteInPriceSearchCache, usePriceSearch } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
 import { formatPrice, type Product, type SiteKind, type SiteResult } from '@/lib/searchResults'
 
@@ -109,13 +110,14 @@ function CategoryPage() {
   }, [locationParam, city.label, setCity])
 
   const location = city.label
-  const { data: priceData, isLoading, isError } = usePriceSearch({ query: q, location })
-  const sites = priceData?.sites ?? []
-  const site = sites.find((item) => item.slug === siteName)
+  const queryClient = useQueryClient()
+  const cachedSite = findSiteInPriceSearchCache(queryClient, siteName, location)
+  const { data: priceData, isLoading, isError } = usePriceSearch({ query: q, location }, !cachedSite)
+  const site = cachedSite ?? priceData?.sites.find((item) => item.slug === siteName)
 
   if (isProductRoute) return <Outlet />
 
-  if (isLoading) {
+  if (!cachedSite && isLoading) {
     return (
       <div className="min-h-screen bg-white p-6">
         <div className="text-gray mx-auto flex max-w-7xl items-center justify-center gap-2 py-12">

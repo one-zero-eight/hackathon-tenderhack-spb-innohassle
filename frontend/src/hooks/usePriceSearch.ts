@@ -2,9 +2,10 @@ import { eventsFetch } from '@/api/core'
 import type { SchemaPriceSearchRequest, SchemaPriceSearchResponse } from '@/api/core/types'
 import { mapPriceSearchResponse } from '@/lib/mapSearchResults'
 import type { SiteResult } from '@/lib/searchResults'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 
 export const PRICE_SEARCH_LIMIT = 100
+export const PRICE_SEARCH_STALE_MS = 5 * 60 * 1000
 
 export type PriceSearchParams = {
   query: string
@@ -33,6 +34,28 @@ function mapPriceSearchData(data: SchemaPriceSearchResponse): PriceSearchData {
   }
 }
 
+export function findSiteInPriceSearchCache(queryClient: QueryClient, siteSlug: string, location?: string | null): SiteResult | undefined {
+  const normalizedLocation = location ?? ''
+  const entries = queryClient.getQueriesData<SchemaPriceSearchResponse>({ queryKey: ['price-search'] })
+
+  for (const [queryKey, data] of entries) {
+    if (!data) continue
+    if (queryKey[2] !== normalizedLocation) continue
+    const site = mapPriceSearchData(data).sites.find((item) => item.slug === siteSlug)
+    if (site) return site
+  }
+
+  return undefined
+}
+
+export function findProductInPriceSearchCache(queryClient: QueryClient, siteSlug: string, productId: string, location?: string | null) {
+  const site = findSiteInPriceSearchCache(queryClient, siteSlug, location)
+  if (!site) return null
+  const product = site.products.find((item) => item.id === productId)
+  if (!product) return null
+  return { site, product }
+}
+
 export async function fetchPriceSearch(params: PriceSearchParams): Promise<SchemaPriceSearchResponse> {
   const body: SchemaPriceSearchRequest = {
     query: params.query.trim(),
@@ -54,6 +77,7 @@ export function usePriceSearch(params: PriceSearchParams, enabled = true) {
     queryKey: priceSearchQueryKey(params),
     queryFn: () => fetchPriceSearch(params),
     enabled: enabled && trimmed.length > 0,
+    staleTime: PRICE_SEARCH_STALE_MS,
     select: mapPriceSearchData,
   })
 }
@@ -61,17 +85,23 @@ export function usePriceSearch(params: PriceSearchParams, enabled = true) {
 export function useSiteFromSearch(siteSlug: string, params: PriceSearchParams): SiteResult | undefined {
   const queryClient = useQueryClient()
   const trimmed = params.query.trim()
-  if (!trimmed) return undefined
+  if (!trimmed) return findSiteInPriceSearchCache(queryClient, siteSlug, params.location)
 
   const data = queryClient.getQueryData<SchemaPriceSearchResponse>(priceSearchQueryKey(params))
-  if (!data) return undefined
-  return mapPriceSearchData(data).sites.find((site) => site.slug === siteSlug)
+  if (data) {
+    return mapPriceSearchData(data).sites.find((site) => site.slug === siteSlug)
+  }
+
+  return findSiteInPriceSearchCache(queryClient, siteSlug, params.location)
 }
 
 export function useProductFromSearch(siteSlug: string, productId: string, params: PriceSearchParams) {
+  const queryClient = useQueryClient()
   const site = useSiteFromSearch(siteSlug, params)
-  if (!site) return null
-  const product = site.products.find((item) => item.id === productId)
+  const cached = findProductInPriceSearchCache(queryClient, siteSlug, params.location)
+  const resolvedSite = site ?? cached
+  if (!resolvedSite) return null
+  const product = resolvedSite.products.find((item) => item.id === productId)
   if (!product) return null
-  return { site, product }
+  return { site: resolvedSite, product }
 }

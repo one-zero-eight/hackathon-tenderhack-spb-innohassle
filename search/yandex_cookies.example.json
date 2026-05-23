@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Session_id",
+    "value": "your-session-id-cookie-value",
+    "domain": ".yandex.ru",
+    "path": "/",
+    "secure": true,
+    "httpOnly": true
+  }
+]

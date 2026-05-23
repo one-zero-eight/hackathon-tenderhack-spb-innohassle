@@ -1,0 +1,7 @@
+.venv
+__pycache__
+*.pyc
+.env
+yandex_cookies.json
+.git
+.python-version

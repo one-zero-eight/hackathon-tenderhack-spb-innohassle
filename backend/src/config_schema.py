@@ -18,6 +18,11 @@ class ApiSettings(BaseModel):
     )
     "PostgreSQL database connection URL"
     secret_key: SecretStr = Field(...)
+    nominatim_url: str = Field(
+        default="http://nominatim:8080",
+        examples=["http://nominatim:8080", "http://localhost:8080"],
+    )
+    "Base URL of the local Nominatim geocoding service (Docker service name by default)"
 
 
 class AuthSettings(BaseModel):

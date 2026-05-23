@@ -15,6 +15,17 @@ app.router.route_class = AutoDeriveResponsesAPIRoute
 
 patch_fastapi(app)
 
+
+def _openapi_servers() -> list[dict[str, str]]:
+    servers = list(app.servers)
+    root_path = app.root_path.rstrip("/")
+    if root_path and app.root_path_in_servers:
+        root_path_server = {"url": root_path}
+        if root_path_server not in servers:
+            servers.insert(0, root_path_server)
+    return servers
+
+
 def _fix_response_headers(node: object) -> None:
     """HTTPException headers are serialized as plain strings; OpenAPI expects Header objects."""
     if isinstance(node, dict):
@@ -42,6 +53,7 @@ def custom_openapi():
         openapi_version=app.openapi_version,
         description=app.description,
         routes=app.routes,
+        servers=_openapi_servers(),
     )
     _fix_response_headers(schema)
     app.openapi_schema = schema

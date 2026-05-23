@@ -10,16 +10,29 @@ from urllib.parse import urljoin
 
 import requests
 
+from src.api.logging_ import logger
+from src.api.parsers.geocoder import resolve_ym_region
+from src.config import api_settings
+
 YANDEX_PAGE_SIZE = 8
 MAX_YANDEX_PAGES = 20
 
 
-async def parse_yandex_market_products(query: str, limit: int = 5, skip: int = 0) -> list[dict]:
-    """Parse Yandex Market search results asynchronously."""
-    return await asyncio.to_thread(_parse_yandex_market_products_sync, query, limit, skip)
+async def parse_yandex_market_products(query: str, limit: int = 5, skip: int = 0, location: str | None = None) -> list[dict]:
+    """Parse Yandex Market search results asynchronously.
+
+    Args:
+        query:    Search query.
+        limit:    Maximum number of results.
+        skip:     Number of results to skip.
+        location: City/region name for localised pricing (e.g. 'Санкт-Петербург').
+                  Defaults to Moscow when omitted.
+    """
+    lr = resolve_ym_region(location, api_settings.nominatim_url)
+    return await asyncio.to_thread(_parse_yandex_market_products_sync, query, limit, skip, lr)
 
 
-def _parse_yandex_market_products_sync(query: str, limit: int = 5, skip: int = 0) -> list[dict]:
+def _parse_yandex_market_products_sync(query: str, limit: int = 5, skip: int = 0, lr: int = 213) -> list[dict]:
     """Parse Yandex Market search results via HTML + embedded API state."""
     headers = {
         "User-Agent": (
@@ -42,7 +55,7 @@ def _parse_yandex_market_products_sync(query: str, limit: int = 5, skip: int = 0
 
     with requests.Session() as session:
         for page in range(1, max_pages + 1):
-            params = {"text": query}
+            params: dict[str, object] = {"text": query, "lr": lr}
             if page > 1:
                 params["page"] = page
 

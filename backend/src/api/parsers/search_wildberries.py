@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import re
 import subprocess
@@ -11,17 +12,30 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from src.api.logging_ import logger
+from src.api.parsers.geocoder import resolve_wb_dest
+from src.config import api_settings
+
 CHROME_EXECUTABLE_PATH = "/usr/bin/google-chrome"
 MAX_SCROLL_ATTEMPTS = 30
 SCROLL_PAUSE_SECONDS = 1
 
 
-async def parse_wildberries_products(keyword: str, limit: int = 5, skip: int = 0) -> list[dict]:
-    """Parse Wildberries search results asynchronously."""
-    return await asyncio.to_thread(_parse_wildberries_products_sync, keyword, limit, skip)
+async def parse_wildberries_products(keyword: str, limit: int = 5, skip: int = 0, location: str | None = None) -> list[dict]:
+    """Parse Wildberries search results asynchronously.
+
+    Args:
+        keyword:  Search query.
+        limit:    Maximum number of results.
+        skip:     Number of results to skip.
+        location: City/region name for localised pricing (e.g. 'Санкт-Петербург').
+                  Defaults to Moscow when omitted.
+    """
+    dest = resolve_wb_dest(location, api_settings.nominatim_url)
+    return await asyncio.to_thread(_parse_wildberries_products_sync, keyword, limit, skip, dest)
 
 
-def _parse_wildberries_products_sync(keyword: str, limit: int = 5, skip: int = 0) -> list[dict]:
+def _parse_wildberries_products_sync(keyword: str, limit: int = 5, skip: int = 0, dest: int = -1257786) -> list[dict]:
     # Hide the real desktop
     leaky_vars = ["WAYLAND_DISPLAY", "XDG_SESSION_TYPE", "DBUS_SESSION_BUS_ADDRESS"]
     for var in leaky_vars:
@@ -29,7 +43,7 @@ def _parse_wildberries_products_sync(keyword: str, limit: int = 5, skip: int = 0
             del os.environ[var]
 
     # Start the invisible monitor
-    display = Display(visible=0, size=(1920, 1080))
+    display = Display(visible=False, size=(1920, 1080))
     display.start()
 
     try:
@@ -42,7 +56,7 @@ def _parse_wildberries_products_sync(keyword: str, limit: int = 5, skip: int = 0
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
 
-        print("Launching stealth browser inside virtual display...")
+        logger.info("Launching stealth browser inside virtual display...")
         driver = uc.Chrome(
             options=options,
             browser_executable_path=CHROME_EXECUTABLE_PATH,
@@ -50,8 +64,20 @@ def _parse_wildberries_products_sync(keyword: str, limit: int = 5, skip: int = 0
         )
 
         try:
-            print(f"Navigating to Wildberries search for: '{keyword}'")
-            driver.get(f"https://www.wildberries.ru/catalog/0/search.aspx?search={quote_plus(keyword)}")
+            logger.info(f"Navigating to Wildberries search for: '{keyword}' (dest={dest})")
+            driver.get(f"https://www.wildberries.ru/catalog/0/search.aspx?search={quote_plus(keyword)}&dest={dest}")
+
+            # Inject the geo cookie so subsequent XHR calls from the page also use the correct region
+            geo_cookie_value = json.dumps({"id": dest})
+            for cookie_name in ("wbx-geo", "GeoIdsJson"):
+                driver.add_cookie({
+                    "name": cookie_name,
+                    "value": geo_cookie_value,
+                    "domain": ".wildberries.ru",
+                    "path": "/",
+                })
+            # Reload so WB JS picks up the region cookie
+            driver.get(f"https://www.wildberries.ru/catalog/0/search.aspx?search={quote_plus(keyword)}&dest={dest}")
 
             WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "article, .product-card")))
             time.sleep(2)

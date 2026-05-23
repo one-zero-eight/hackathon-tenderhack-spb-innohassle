@@ -4,6 +4,7 @@ api_settings:
   db_url: "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/postgres"
   secret_key: ...  # use `openssl rand -hex 32` to generate a random key
   token_expiration_in_minutes: 60
+  nominatim_url: "http://nominatim:8080"  # local Nominatim Docker service
 
 auth_settings:
   access_token_ttl_minutes: 60

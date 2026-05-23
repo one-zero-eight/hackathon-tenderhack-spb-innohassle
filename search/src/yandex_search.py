@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import random
 import sys
@@ -11,10 +12,21 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
-from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
+from playwright.async_api import BrowserContext, Page
 
+from cloak_browser import (
+    CloakSessionConfig,
+    close_cloak_session,
+    new_pool_profile_dir,
+    open_cloak_session,
+)
+from config import yandex_search_settings
+from config_schema import normalize_socks5_proxy_url
 from notify import notify_captcha
+from proxy_bridge import bridge_manager
 from query_rewrite import rewrite_query
+
+logger = logging.getLogger(__name__)
 
 YA_RU_URL = "https://ya.ru/"
 COOKIES_PATH = Path(__file__).resolve().parent.parent / "yandex_cookies.json"
@@ -27,28 +39,13 @@ PAGER_NEXT_SELECTORS = (
 )
 MAX_PAGER_CLICKS = 1
 
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/122.0.0.0 Safari/537.36"
-)
+def _resolve_headless() -> bool:
+    env = os.getenv("CLOAK_HEADLESS") or os.getenv("PLAYWRIGHT_HEADLESS")
+    if env is not None:
+        return env.lower() in {"1", "true", "yes"}
+    return yandex_search_settings.headless
 
-PROXIES = [
-    "http://qJl9qiKZnJ:TUx3MBeLrU@185.200.188.100:41403",
-    "http://yXEwruw6Sk:9zN5auC9x5@103.82.103.157:58020",
-    "http://yf3HaMfY7U:MdGUgUkVKs@103.127.77.179:62868",
-    "http://CryQV1c3lo:pjXmuWtdeh@103.82.103.17:59750",
-    "http://DvYemkIajY:uoSe6oN3RQ@45.158.198.88:40172",
-    "http://YHMI2bDrbg:jwaAI5v6IS@45.132.252.133:53570",
-    "http://m8IY2bBm6i:F1O2ykVyiu@45.154.247.22:63275",
-    "http://NaTLKpP86D:b35iXcQ25L@103.82.103.253:47798",
-    "http://Z7f0lVoTgu:jyMDFnmlqs@45.132.252.17:20890",
-    "http://Jls7tshfC7:yiESYD0iJt@193.168.224.143:51312",
-]
 
-random.shuffle(PROXIES)
-
-PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() in {"1", "true", "yes"}
 MACBOOK = os.getenv("MACBOOK", "false").lower() in {"1", "true", "yes"}
 CAPTCHA_WAIT_TIMEOUT_MS = int(os.getenv("CAPTCHA_WAIT_TIMEOUT_MS", "1800000"))
 HEADLESS_CAPTCHA_WAIT_MS = int(os.getenv("HEADLESS_CAPTCHA_WAIT_MS", "120000"))
@@ -118,16 +115,25 @@ def _pick_proxy(proxies: str | Sequence[str]) -> str:
     return proxy
 
 
-def _parse_proxy(proxy_url: str) -> dict[str, str]:
-    parsed = urlparse(proxy_url)
-    config: dict[str, str] = {
-        "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
-    }
+def _configured_proxies() -> list[str]:
+    pool = yandex_search_settings.proxy_pool()
+    if not pool:
+        msg = (
+            "No SOCKS5 proxies configured. Set yandex_search_settings.proxy or "
+            "yandex_search_settings.proxies in settings.yaml "
+            "(copy from settings.example.yaml)."
+        )
+        raise RuntimeError(msg)
+    return pool
+
+
+def _mask_proxy(proxy_url: str) -> str:
+    parsed = urlparse(normalize_socks5_proxy_url(proxy_url))
+    host = parsed.hostname or "?"
+    port = f":{parsed.port}" if parsed.port else ""
     if parsed.username:
-        config["username"] = parsed.username
-    if parsed.password:
-        config["password"] = parsed.password
-    return config
+        return f"{parsed.scheme}://***@{host}{port}"
+    return f"{parsed.scheme}://{host}{port}"
 
 
 class YandexCaptchaError(RuntimeError):
@@ -146,7 +152,7 @@ async def _is_captcha_page(page: Page) -> bool:
 
 
 def _captcha_wait_timeout_ms() -> int:
-    if MACBOOK and sys.platform == "darwin" and not PLAYWRIGHT_HEADLESS:
+    if MACBOOK and sys.platform == "darwin" and not _resolve_headless():
         return CAPTCHA_WAIT_TIMEOUT_MS
     return HEADLESS_CAPTCHA_WAIT_MS
 
@@ -163,51 +169,43 @@ class YandexBrowserSession:
     def __init__(
         self,
         cookies_path: Path = COOKIES_PATH,
-        proxies: Sequence[str] = PROXIES,
+        proxies: Sequence[str] | None = None,
     ) -> None:
         self._cookies_path = cookies_path
-        self._proxies = proxies
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
+        self._proxies = list(proxies) if proxies is not None else _configured_proxies()
         self._context: BrowserContext | None = None
+        self._bridge_upstream: str | None = None
+        self._profile_dir = new_pool_profile_dir("yandex")
         self._home_page: Page | None = None
 
     async def start(self) -> None:
         if self._context is not None:
             return
 
-        proxy = _parse_proxy(_pick_proxy(self._proxies))
+        proxy_url = normalize_socks5_proxy_url(_pick_proxy(self._proxies))
         cookies = load_yandex_cookies(self._cookies_path)
+        logger.info("Yandex search CloakBrowser proxy: %s", _mask_proxy(proxy_url))
 
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=PLAYWRIGHT_HEADLESS,
-            proxy=proxy,
-            args=["--disable-blink-features=AutomationControlled"],
+        config = CloakSessionConfig(
+            headless=_resolve_headless(),
+            proxy=proxy_url,
+            geoip=yandex_search_settings.geoip and bool(proxy_url),
+            humanize=yandex_search_settings.humanize,
+            user_data_dir=self._profile_dir,
         )
-        self._context = await self._browser.new_context(
-            locale="ru-RU",
-            user_agent=USER_AGENT,
-            viewport={"width": 1440, "height": 900},
-        )
-        await self._context.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-        )
+        self._context, self._home_page, self._bridge_upstream = await open_cloak_session(config)
         await self._context.add_cookies(cookies)
-        self._home_page = await self._context.new_page()
         await self._home_page.goto(YA_RU_URL, wait_until="domcontentloaded", timeout=30_000)
 
     async def stop(self) -> None:
         self._home_page = None
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
+        await close_cloak_session(
+            self._context,
+            keep_alive=False,
+            bridge_upstream=self._bridge_upstream,
+        )
+        self._context = None
+        self._bridge_upstream = None
 
     async def new_tab(self) -> Page:
         if self._context is None:
@@ -223,6 +221,7 @@ class YandexBrowserSession:
 
         rewritten_query = rewrite_query(query, region)
         page = await self._open_search_tab()
+        logger.info("Yandex search: %r (rewritten=%r)", query, rewritten_query)
         try:
             await _submit_search(page, rewritten_query)
             yield _parse_results(await _current_soup(page))
@@ -241,7 +240,7 @@ class YandexBrowserSession:
 
 async def init_browser_session(
     cookies_path: Path = COOKIES_PATH,
-    proxies: Sequence[str] = PROXIES,
+    proxies: Sequence[str] | None = None,
 ) -> YandexBrowserSession:
     global _session
     if _session is None:
@@ -255,6 +254,7 @@ async def close_browser_session() -> None:
     if _session is not None:
         await _session.stop()
         _session = None
+    await bridge_manager.shutdown_all()
 
 
 def get_browser_session() -> YandexBrowserSession:

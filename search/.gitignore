@@ -1,5 +1,7 @@
 .env
+settings.yaml
 yandex_cookies.json
+data/cloak-profiles/
 __pycache__
 .venv
 

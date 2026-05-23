@@ -3,5 +3,6 @@ __pycache__
 *.pyc
 .env
 yandex_cookies.json
+settings.yaml
 .git
 .python-version

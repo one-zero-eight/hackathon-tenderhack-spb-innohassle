@@ -16,7 +16,7 @@ def notify_captcha() -> None:
             "osascript",
             "-e",
             (
-                'display notification "Solve captcha in the Playwright browser" '
+                'display notification "Solve captcha in the CloakBrowser window" '
                 'with title "Yandex Search" sound name "Glass"'
             ),
         ],

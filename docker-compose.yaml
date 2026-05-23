@@ -74,6 +74,7 @@ configs:
         content: |
             $$schema: "./settings.schema.yaml"
             api_settings:
+                app_root_path: "/api"
                 db_url: "postgresql+asyncpg://postgres:postgres@postgres:5432/postgres"
                 secret_key: ${SECRET_KEY:-meow}
                 token_expiration_in_minutes: 60

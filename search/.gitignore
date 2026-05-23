@@ -2,3 +2,6 @@
 yandex_cookies.json
 __pycache__
 .venv
+
+response.json
+cleaning/

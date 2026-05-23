@@ -70,16 +70,23 @@ _proxy_last_used: dict[str, float] = {}
 next_request_time: float = 0.0
 _session: YandexBrowserSession | None = None
 
-speed_factor = 0.5
+pager_speed_factor = 0.7
+scroll_speed_factor = 0.5
+type_speed_factor = 0.3
 
-PAGER_TIME_SLEEP_SECONDS = (10 * speed_factor, 20 * speed_factor)
-SCROLL_TARGET_DEPTH_FRACTION = (0.55 * speed_factor, 0.95 * speed_factor)
-SCROLL_BACK_UP_CHANCE = 0.12 * speed_factor
-SCROLL_BACK_UP_VIEWPORT_FRACTION = (0.05 * speed_factor, 0.2 * speed_factor)
-SCROLL_DOWN_VIEWPORT_FRACTION = (0.12 * speed_factor, 0.5 * speed_factor)
-SCROLL_STEP_PAUSE_SECONDS = (0.08 * speed_factor, 0.35 * speed_factor)
-SCROLL_LONG_PAUSE_CHANCE = 0.2 * speed_factor
-SCROLL_LONG_PAUSE_SECONDS = (0.25 * speed_factor, 0.85 * speed_factor)
+PAGER_TIME_SLEEP_SECONDS = (10 * pager_speed_factor, 20 * pager_speed_factor)
+SCROLL_TARGET_DEPTH_FRACTION = (0.55 * scroll_speed_factor, 0.95 * scroll_speed_factor)
+SCROLL_BACK_UP_CHANCE = 0.12 * scroll_speed_factor
+SCROLL_BACK_UP_VIEWPORT_FRACTION = (0.05 * scroll_speed_factor, 0.2 * scroll_speed_factor)
+SCROLL_DOWN_VIEWPORT_FRACTION = (0.12 * scroll_speed_factor, 0.5 * scroll_speed_factor)
+SCROLL_STEP_PAUSE_SECONDS = (0.08 * scroll_speed_factor, 0.35 * scroll_speed_factor)
+SCROLL_LONG_PAUSE_CHANCE = 0.2 * scroll_speed_factor
+SCROLL_LONG_PAUSE_SECONDS = (0.25 * scroll_speed_factor, 0.85 * scroll_speed_factor)
+TYPE_SPACE_DELAY_MS = (int(40 * type_speed_factor), int(110 * type_speed_factor))
+TYPE_SPACE_PAUSE_SECONDS = (0.05 * type_speed_factor, 0.25 * type_speed_factor)
+TYPE_CHUNK_DELAY_MS = (int(60 * type_speed_factor), int(180 * type_speed_factor))
+TYPE_CHUNK_PAUSE_SECONDS = (0.15 * type_speed_factor, 0.55 * type_speed_factor)
+TYPE_FINISH_PAUSE_SECONDS = (1 * type_speed_factor, 2 * type_speed_factor)
 
 def load_yandex_cookies(path: Path = COOKIES_PATH) -> list[dict]:
     if not path.exists():
@@ -163,6 +170,7 @@ class YandexBrowserSession:
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
+        self._home_page: Page | None = None
 
     async def start(self) -> None:
         if self._context is not None:
@@ -186,8 +194,11 @@ class YandexBrowserSession:
             "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
         )
         await self._context.add_cookies(cookies)
+        self._home_page = await self._context.new_page()
+        await self._home_page.goto(YA_RU_URL, wait_until="domcontentloaded", timeout=30_000)
 
     async def stop(self) -> None:
+        self._home_page = None
         if self._context is not None:
             await self._context.close()
             self._context = None
@@ -198,10 +209,13 @@ class YandexBrowserSession:
             await self._playwright.stop()
             self._playwright = None
 
-    async def _open_search_tab(self) -> Page:
+    async def new_tab(self) -> Page:
         if self._context is None:
             raise RuntimeError("Browser session is not started")
         return await self._context.new_page()
+
+    async def _open_search_tab(self) -> Page:
+        return await self.new_tab()
 
     async def search(self, query: str, region: str = "санкт-петербург") -> AsyncGenerator[list[dict], None]:
         if self._context is None:
@@ -302,16 +316,19 @@ async def _type_query_naturally(search_input, query: str) -> None:
 
     for index, chunk in enumerate(chunks):
         if index > 0:
-            await search_input.press_sequentially(" ", delay=random.randint(40, 110))
-            await _human_pause(0.05, 0.25)
+            await search_input.press_sequentially(
+                " ",
+                delay=random.randint(*TYPE_SPACE_DELAY_MS),
+            )
+            await _human_pause(*TYPE_SPACE_PAUSE_SECONDS)
         await search_input.press_sequentially(
             chunk,
-            delay=random.randint(60, 180),
+            delay=random.randint(*TYPE_CHUNK_DELAY_MS),
         )
         if index < len(chunks) - 1:
-            await _human_pause(0.15, 0.55)
+            await _human_pause(*TYPE_CHUNK_PAUSE_SECONDS)
 
-    await _human_pause(1, 2)
+    await _human_pause(*TYPE_FINISH_PAUSE_SECONDS)
 
 
 async def _scroll_page_chaotically(page: Page) -> None:
@@ -442,26 +459,33 @@ def _parse_results(soup: BeautifulSoup) -> list[dict]:
     return results
 
 
-def _hostname_shop_fields(products: list[dict]) -> tuple[str | None, str | None]:
+def _hostname_shop_fields(
+    products: list[dict],
+) -> tuple[str | None, str | None, str | None]:
     rating = None
     reviews = None
+    delivery = None
     for product in products:
         if rating is None:
             rating = product.get("rating")
         if reviews is None:
             reviews = product.get("reviews")
-        if rating is not None and reviews is not None:
+        if delivery is None:
+            delivery = product.get("delivery")
+        if rating is not None and reviews is not None and delivery is not None:
             break
-    return rating, reviews
+    return rating, reviews, delivery
 
 
 def _hostname_group(hostname: str, products: list[dict]) -> dict:
-    rating, reviews = _hostname_shop_fields(products)
+    rating, reviews, delivery = _hostname_shop_fields(products)
     group: dict = {"hostname": hostname, "products": products}
     if rating is not None:
         group["rating"] = rating
     if reviews is not None:
         group["reviews"] = reviews
+    if delivery is not None:
+        group["delivery"] = delivery
     return group
 
 

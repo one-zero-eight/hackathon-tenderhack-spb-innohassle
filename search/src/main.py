@@ -5,8 +5,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-import httpx
-from extract_products import ParsedProduct, extract_products
+from extract_products import ParsedPageProducts, extract_products
 from fastapi import FastAPI, Query
 from fastapi.responses import StreamingResponse
 from query_rewrite import rewrite_query
@@ -115,26 +114,33 @@ def _aggregate_by_hostname(
     return added
 
 
-def _hostname_shop_fields(products: list[dict]) -> tuple[str | None, str | None]:
+def _hostname_shop_fields(
+    products: list[dict],
+) -> tuple[str | None, str | None, str | None]:
     rating = None
     reviews = None
+    delivery = None
     for product in products:
         if rating is None:
             rating = product.get("rating")
         if reviews is None:
             reviews = product.get("reviews")
-        if rating is not None and reviews is not None:
+        if delivery is None:
+            delivery = product.get("delivery")
+        if rating is not None and reviews is not None and delivery is not None:
             break
-    return rating, reviews
+    return rating, reviews, delivery
 
 
 def _hostname_group(hostname: str, products: list[dict]) -> dict:
-    rating, reviews = _hostname_shop_fields(products)
+    rating, reviews, delivery = _hostname_shop_fields(products)
     group: dict = {"hostname": hostname, "products": products}
     if rating is not None:
         group["rating"] = rating
     if reviews is not None:
         group["reviews"] = reviews
+    if delivery is not None:
+        group["delivery"] = delivery
     return group
 
 
@@ -263,7 +269,7 @@ async def _yandex_extended_search_stream(query: str, region: str) -> AsyncIterat
             await notify()
         return added
 
-    async def apply_extraction(source: dict, parsed_products: list[ParsedProduct]) -> None:
+    async def apply_extraction(source: dict, parsed_page: ParsedPageProducts) -> None:
         hostname = source["hostname"]
         href = source.get("href")
 
@@ -275,8 +281,8 @@ async def _yandex_extended_search_stream(query: str, region: str) -> AsyncIterat
                 if not (product.get("href") == href and product.get("extracted") is False)
             ]
 
-        if parsed_products:
-            for parsed in parsed_products:
+        if parsed_page.products:
+            for parsed in parsed_page.products:
                 async with aggregated_lock:
                     aggregated[hostname].append({
                         "extracted": True,
@@ -288,45 +294,59 @@ async def _yandex_extended_search_stream(query: str, region: str) -> AsyncIterat
             return
 
         async with aggregated_lock:
-            aggregated[hostname].append({**source, "extracted": True})
+            if parsed_page.message:
+                aggregated[hostname].append({
+                    "extracted": True,
+                    "hostname": hostname,
+                    "href": href,
+                    "message": parsed_page.message,
+                })
+            if not aggregated[hostname]:
+                aggregated.pop(hostname, None)
         await notify()
 
-    async def extract_one(http_client: httpx.AsyncClient, source: dict) -> None:
+    async def extract_one(source: dict) -> None:
         nonlocal in_flight
 
         try:
             href = source.get("href")
             if not href:
-                await apply_extraction(source, [])
+                await apply_extraction(source, ParsedPageProducts())
                 return
 
-            parsed_products = await extract_products(http_client, href, query, region)
-            await apply_extraction(source, parsed_products)
+            parsed_page = await extract_products(
+                href,
+                query,
+                region,
+                serp_price=source.get("price"),
+                serp_thumbnail=source.get("thumbnail"),
+            )
+            await apply_extraction(source, parsed_page)
         except asyncio.CancelledError:
             raise
         except Exception:
-            await apply_extraction(source, [])
+            await apply_extraction(source, ParsedPageProducts())
         finally:
             async with in_flight_lock:
                 in_flight -= 1
             await notify()
 
-    async def schedule_extraction(http_client: httpx.AsyncClient, source: dict) -> None:
+    async def schedule_extraction(source: dict) -> None:
         nonlocal in_flight
 
         async with in_flight_lock:
             in_flight += 1
 
-        task = asyncio.create_task(extract_one(http_client, source))
+        task = asyncio.create_task(extract_one(source))
         extraction_tasks.add(task)
         task.add_done_callback(extraction_tasks.discard)
 
-    async def run_search(http_client: httpx.AsyncClient) -> None:
+    async def run_search() -> None:
         try:
             async for page_results in search_yandex(query, region):
                 new_products = await add_yandex_page(page_results)
                 for product in new_products:
-                    await schedule_extraction(http_client, product)
+                    await schedule_extraction(product)
         except asyncio.CancelledError:
             raise
         except YandexCaptchaError as error:
@@ -343,25 +363,24 @@ async def _yandex_extended_search_stream(query: str, region: str) -> AsyncIterat
     })
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as http_client:
-            search_task = asyncio.create_task(run_search(http_client))
+        search_task = asyncio.create_task(run_search())
 
-            while True:
-                await state_updates.get()
-                payload: dict = {
-                    "type": "page",
-                    "results": await current_results(),
-                }
-                yield _format_update(payload)
+        while True:
+            await state_updates.get()
+            payload: dict = {
+                "type": "page",
+                "results": await current_results(),
+            }
+            yield _format_update(payload)
 
-                async with in_flight_lock:
-                    finished = search_done.is_set() and in_flight == 0
-                if finished and state_updates.empty():
-                    break
+            async with in_flight_lock:
+                finished = search_done.is_set() and in_flight == 0
+            if finished and state_updates.empty():
+                break
 
-            await search_task
-            if extraction_tasks:
-                await asyncio.gather(*extraction_tasks, return_exceptions=True)
+        await search_task
+        if extraction_tasks:
+            await asyncio.gather(*extraction_tasks, return_exceptions=True)
     finally:
         pending: list[asyncio.Task[None]] = []
         if search_task is not None and not search_task.done():
@@ -412,7 +431,8 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        # host="0.0.0.0",
+        host="127.0.0.1",
         port=9005,
         reload=False,
         root_path=API_PREFIX,

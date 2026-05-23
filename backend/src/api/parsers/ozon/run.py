@@ -2,7 +2,10 @@ import logging
 
 from src.api.parsers.ozon.exceptions import OzonAccessError
 from src.api.parsers.ozon.parser import OzonParser
+<<<<<<< HEAD
 from src.api.parsers.price_utils import parse_rub_price
+=======
+>>>>>>> 7ff8833 (fix)
 from src.config import ozon_settings
 
 logger = logging.getLogger(__name__)

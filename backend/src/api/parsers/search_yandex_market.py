@@ -10,11 +10,8 @@ from urllib.parse import urljoin
 
 import httpx
 
-from src.api.parsers.ozon.user_agent import pick_user_agent
-<<<<<<< HEAD
-=======
 from src.api.parsers.geocoder import resolve_ym_region
->>>>>>> 35adfd8 (fix)
+from src.api.parsers.ozon.user_agent import pick_user_agent
 from src.config import yandex_market_settings
 
 logger = logging.getLogger(__name__)
@@ -60,6 +57,7 @@ async def parse_yandex_market_products(
     skip: int = 0,
     *,
     lr: int = YM_MOSCOW_LR,
+    location: str | None = None,
 ) -> list[dict]:
     """Parse Yandex Market search results asynchronously.
 

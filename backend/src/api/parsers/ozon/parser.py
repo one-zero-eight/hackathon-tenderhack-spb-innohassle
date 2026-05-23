@@ -246,23 +246,10 @@ class OzonParser:
         self._bridge_upstream = None
 
     @property
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 7ff8833 (fix)
     def _p(self) -> Page:
         if not self._page:
             raise RuntimeError("CloakBrowser page is not started")
         return self._page
-<<<<<<< HEAD
-=======
-    def _d(self) -> Chrome:
-        if not self.driver:
-            raise RuntimeError("Driver is not running")
-        return self.driver
->>>>>>> 5be78a8 (feat: remove nominatim as it turned way too much time to load. Translate all logs to English)
-=======
->>>>>>> 7ff8833 (fix)
 
     async def _sleep(self, min_sec: float, max_sec: float | None = None) -> None:
         await asyncio.sleep(random.uniform(min_sec, max_sec or min_sec))
@@ -292,15 +279,7 @@ class OzonParser:
             await self._sleep(0.3, 0.5)
         if await self._is_blocked():
             raise OzonAccessError(
-<<<<<<< HEAD
-<<<<<<< HEAD
                 f"Ozon ограничил доступ: {url}. Проверьте proxy/cookies (CloakBrowser).",
-=======
-                f"Ozon restricted access: {url}. Try without --headless, with --slow, or a smaller -n.",
->>>>>>> 5be78a8 (feat: remove nominatim as it turned way too much time to load. Translate all logs to English)
-=======
-                f"Ozon ограничил доступ: {url}. Проверьте proxy/cookies (CloakBrowser).",
->>>>>>> 7ff8833 (fix)
                 url=url,
             )
 
@@ -309,21 +288,6 @@ class OzonParser:
             return f"title={await self._p.title()!r} url={self._p.url}"
         except Exception:
             return "title/url unavailable"
-<<<<<<< HEAD
-
-    async def _dismiss_overlays(self) -> None:
-        await dismiss_buttons(self._p, ("OK", "Понятно", "Принять"))
-
-    def _serp_wait_timeout(self) -> float:
-        base = float(self.element_wait_timeout)
-        if self.keep_alive:
-            return min(max(base, 10.0), 15.0)
-        return min(max(base, 10.0), 15.0)
-
-    async def _wait_serp_ready(self, timeout: float) -> None:
-        await wait_for_function(self._p, SERP_PRODUCTS_READY, timeout_sec=timeout, poll_interval_sec=0.15)
-=======
->>>>>>> 7ff8833 (fix)
 
     async def _dismiss_overlays(self) -> None:
         await dismiss_buttons(self._p, ("OK", "Понятно", "Принять"))
@@ -399,28 +363,6 @@ class OzonParser:
         await self._goto(OZON_HOME, fast=False)
         await self._dismiss_overlays()
         if await self._is_blocked():
-            raise OzonAccessError(f"Ozon ограничил доступ ({await self._page_context()})")
-        if not await self._try_fill_search_input(query):
-            raise OzonAccessError("Поле поиска не найдено")
-        await self._sleep(0.5, 0.9)
-        await self._wait_serp_ready(serp_timeout)
-            raise OzonAccessError(
-                f"Ozon restricted access on the home page ({await self._page_context()})",
-                url=OZON_HOME,
-            )
-        if not await self._try_fill_search_input(query):
-            raise OzonAccessError(
-                f"Search field not found ({await self._page_context()})",
-            )
-        await self._sleep(0.3, 0.7)
-        await self._d.send_keys("\n")
-        await self._sleep(0.8, 1.2)
-        try:
-            await self._wait_serp_ready(serp_timeout)
-        except TimeoutError as exc:
-            raise OzonAccessError(
-                f"Products did not appear in search results after entering the query ({await self._page_context()})",
-            ) from exc
             raise OzonAccessError(f"Ozon ограничил доступ ({await self._page_context()})")
         if not await self._try_fill_search_input(query):
             raise OzonAccessError("Поле поиска не найдено")

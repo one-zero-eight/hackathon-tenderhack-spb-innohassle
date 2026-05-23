@@ -80,6 +80,21 @@ class OzonSettings(BaseModel):
         return None
 
 
+def _normalize_socks5_proxy_url(raw: str) -> str:
+    """Yandex Market httpx uses SOCKS5 only."""
+    value = raw.strip()
+    if "://" not in value:
+        return f"socks5://{value}"
+    parsed = urlparse(value)
+    if parsed.scheme in ("socks5", "socks5h"):
+        return value
+    if parsed.scheme in ("http", "https"):
+        return f"socks5://{parsed.netloc}"
+    raise ValueError(
+        f"yandex_market_settings: only socks5 proxy is supported, got {parsed.scheme!r}",
+    )
+
+
 class BrowserPoolSettings(BaseModel):
     wildberries_pool_size: int = Field(2, ge=1, le=5)
     "Number of parallel Chrome sessions for Wildberries"
@@ -94,14 +109,29 @@ class WildberriesSettings(BaseModel):
     "Path to Chrome/Chromium executable"
     proxy: str | None = None
     proxies: list[str] = Field(default_factory=list)
-<<<<<<< HEAD
     page_load_timeout: int = 20
     "Max seconds to wait for Wildberries page load"
     element_wait_timeout: int = 8
     "Max seconds to wait for product cards in search results"
     page_load_retries: int = 1
     "How many times to retry opening search after anti-bot or empty page"
-=======
+
+    def resolve_proxy(self) -> str | None:
+        raw = self.proxy
+        if not raw and self.proxies:
+            raw = random.choice(self.proxies)
+        if not raw:
+            return None
+        value = raw.strip()
+        if "://" not in value:
+            return f"socks5://{value}"
+        return value
+
+
+class YandexMarketSettings(BaseModel):
+    proxy: str | None = None
+    "SOCKS5 proxy for httpx: user:pass@host:port or socks5://user:pass@host:port"
+    proxies: list[str] = Field(default_factory=list)
     "SOCKS5 proxy pool; a random entry is used when proxy is not set"
     timeout: int = 30
     "httpx request timeout in seconds"
@@ -111,7 +141,6 @@ class WildberriesSettings(BaseModel):
     "Retries on proxy/connect errors (RemoteProtocolError, timeouts)"
     warmup: bool = True
     "Open market.yandex.ru once per client to obtain cookies before search"
->>>>>>> 35adfd8 (fix)
 
     def resolve_proxy(self) -> str | None:
         raw = self.proxy
@@ -119,61 +148,7 @@ class WildberriesSettings(BaseModel):
             raw = random.choice(self.proxies)
         if not raw:
             return None
-        value = raw.strip()
-        if "://" not in value:
-            return f"socks5://{value}"
-        return value
-
-
-<<<<<<< HEAD
-class YandexMarketSettings(BaseModel):
-    proxy: str | None = None
-    proxies: list[str] = Field(default_factory=list)
-    timeout: int = 12
-    connect_timeout: int = 6
-    request_retries: int = Field(2, ge=1, le=6)
-
-    def resolve_proxy(self) -> str | None:
-        raw = self.proxy
-        if not raw and self.proxies:
-            raw = random.choice(self.proxies)
-        if not raw:
-            return None
-        value = raw.strip()
-        if "://" not in value:
-            return f"socks5://{value}"
-        parsed = urlparse(value)
-        if parsed.scheme in ("socks5", "socks5h"):
-            return value
-        if parsed.scheme in ("http", "https"):
-            return f"socks5://{parsed.netloc}"
-        return value
-=======
-class WildberriesSettings(BaseModel):
-    headless: bool = True
-    "Run Chrome without a visible window"
-    chrome_executable_path: str | None = None
-    "Path to Chrome/Chromium executable"
-    proxy: str | None = None
-    proxies: list[str] = Field(default_factory=list)
-    page_load_timeout: int = 20
-    "Max seconds to wait for Wildberries page load"
-    element_wait_timeout: int = 8
-    "Max seconds to wait for product cards in search results"
-    page_load_retries: int = 1
-    "How many times to retry opening search after anti-bot or empty page"
->>>>>>> 35adfd8 (fix)
-
-    def resolve_proxy(self) -> str | None:
-        raw = self.proxy
-        if not raw and self.proxies:
-            raw = random.choice(self.proxies)
-        if not raw:
-            return None
-        value = raw.strip()
-        if "://" not in value:
-            return f"socks5://{value}"
-        return value
+        return _normalize_socks5_proxy_url(raw)
 
 
 class Settings(BaseModel):

@@ -1,6 +1,7 @@
 import logging
 
 from src.api.parsers.browser_session_pool import get_browser_session_pool
+from src.api.parsers.geocoder import resolve_wb_dest
 from src.api.parsers.wildberries.exceptions import WildberriesAccessError
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,7 @@ async def parse_wildberries_products(
     skip: int = 0,
     *,
     dest: int = WB_MOSCOW_DEST,
+    location: str | None = None,
 ) -> list[dict]:
     """Parse Wildberries via pooled Chrome sessions (warm browser, regional pricing)."""
     dest = resolve_wb_dest(location)

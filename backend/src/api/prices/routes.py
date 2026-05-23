@@ -24,7 +24,7 @@ async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
             payload.skip,
             location=payload.location,
         ),
-        parse_ozon_products(payload.query, payload.limit, payload.skip, location=payload.location),
+        parse_ozon_products(payload.query, payload.limit),
         return_exceptions=True,
     )
 

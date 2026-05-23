@@ -204,27 +204,35 @@ export async function searchCities(query: string): Promise<CityOption[]> {
 }
 
 async function detectCityByIp(): Promise<CityOption | null> {
-  const res = await fetch('https://ipwho.is/', { signal: AbortSignal.timeout(4000) })
-  if (!res.ok) return null
-  const data = (await res.json()) as {
-    success?: boolean
-    country_code?: string
-    city?: string
-    latitude?: number
-    longitude?: number
-  }
-  if (!data.success || data.country_code !== 'RU') return null
+  try {
+    const res = await fetch('https://geo.kamero.ai/api/geo', { signal: AbortSignal.timeout(4000) })
+    if (!res.ok) return null
 
-  if (data.latitude != null && data.longitude != null) {
-    const city = await reverseGeocode(data.latitude, data.longitude)
-    if (city) return city
-  }
+    const data = (await res.json()) as {
+      country?: string
+      city?: string
+      latitude?: string | number
+      longitude?: string | number
+    }
 
-  if (data.city) {
-    const match = getPopularCities().find((c) => c.label.toLowerCase() === data.city!.toLowerCase())
-    if (match) return match
-    const found = await searchCities(data.city)
-    return found[0] ?? null
+    if (data.country !== 'RU') return null
+
+    const latitude = data.latitude != null ? Number(data.latitude) : null
+    const longitude = data.longitude != null ? Number(data.longitude) : null
+
+    if (latitude != null && longitude != null && Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      const city = await reverseGeocode(latitude, longitude)
+      if (city) return city
+    }
+
+    if (data.city) {
+      const match = getPopularCities().find((c) => c.label.toLowerCase() === data.city!.toLowerCase())
+      if (match) return match
+      const found = await searchCities(data.city)
+      return found[0] ?? null
+    }
+  } catch {
+    return null
   }
 
   return null

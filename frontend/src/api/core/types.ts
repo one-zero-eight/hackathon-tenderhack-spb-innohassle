@@ -71,7 +71,7 @@ export interface components {
             /** Source */
             source: string;
             /** Price */
-            price: number;
+            price?: number | null;
             /** Name */
             name?: string | null;
             /** Brand */

@@ -1,5 +1,5 @@
-import { eventsFetch } from '@/api'
-import type { SchemaPriceSearchRequest, SchemaPriceSearchResponse } from '@/api/types.ts'
+import { eventsFetch } from '@/api/core'
+import type { SchemaPriceSearchRequest, SchemaPriceSearchResponse } from '@/api/core/types'
 import { mapPriceSearchResponse } from '@/lib/mapSearchResults'
 import type { SiteResult } from '@/lib/searchResults'
 import { useQuery, useQueryClient } from '@tanstack/react-query'

@@ -45,7 +45,7 @@ function HomePage() {
   return (
     <div className="relative flex min-h-full flex-1 flex-col">
       <div className="absolute top-4 right-4 flex gap-2 sm:top-6 sm:right-6">
-        <CitySelect className="w-44 sm:w-52" />
+        <CitySelect className="" />
       </div>
 
       <main className="flex flex-1 flex-col items-center justify-start gap-15 px-4 pt-[28vh] pb-24 sm:pt-[32vh]">

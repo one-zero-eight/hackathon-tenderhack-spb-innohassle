@@ -13,7 +13,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "prettify": "prettier . -w -l",
-    "gen:api": "pnpm exec openapi-typescript --root-types --enum"
+    "gen:api": "pnpm exec openapi-typescript --redocly redocly.yaml --root-types --enum"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",

@@ -1,4 +1,5 @@
-import type { SchemaPriceSearchResponse, SchemaProductPrice } from '@/api/types.ts'
+import type { SchemaPriceSearchResponse, SchemaProductPrice } from '@/api/core/types'
+import { normalizeProductImageUrl } from '@/lib/normalizeProductImageUrl'
 import { MARKETPLACE_LOGOS, type Product, type SiteKind, type SiteResult } from '@/lib/searchResults'
 
 type SourceMeta = {
@@ -9,6 +10,12 @@ type SourceMeta = {
 }
 
 const SOURCE_META: Record<string, SourceMeta> = {
+  Ozon: {
+    slug: 'ozon',
+    name: 'OZON',
+    kind: 'ozon',
+    logo: MARKETPLACE_LOGOS.ozon,
+  },
   Wildberries: {
     slug: 'wildberries',
     name: 'Wildberries',
@@ -43,11 +50,11 @@ function mapProduct(item: SchemaProductPrice, slug: string, index: number): Prod
   return {
     id: productId(slug, item.url, index),
     name: item.name?.trim() || 'Без названия',
-    price: Math.round(item.price),
+    price: item.price != null ? Math.round(item.price) : 0,
     brand: item.brand,
     originalPrice: item.original_price != null ? Math.round(item.original_price) : null,
     url: item.url,
-    imageUrl: item.image_url,
+    imageUrl: normalizeProductImageUrl(item.image_url),
   }
 }
 

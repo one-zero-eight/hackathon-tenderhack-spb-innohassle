@@ -20,6 +20,10 @@ export default defineConfig(({ mode }) => {
           // Caddy/public API keeps /api; direct FastAPI container serves /prices/* without prefix.
           rewrite: stripApiPrefix ? (path) => path.replace(/^\/api/, '') : (path) => path,
         },
+        '/search-api': {
+          target: targetOrigin,
+          changeOrigin: true,
+        },
         '/yandex-suggest': {
           target: 'https://suggest.yandex.ru',
           changeOrigin: true,

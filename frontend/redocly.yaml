@@ -1,6 +1,9 @@
 apis:
-  api:
-    root: http://localhost:8000/openapi.json
+  core:
+    root: https://tenderhack.dofi4ka.ru/api/openapi.json
     x-openapi-ts:
-      output: ./src/api/types.ts
-      #  --root-types --enum
+      output: ./src/api/core/types.ts
+  search:
+    root: https://tenderhack.dofi4ka.ru/search-api/openapi.json
+    x-openapi-ts:
+      output: ./src/api/search/types.ts

@@ -5,6 +5,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useCity } from '@/hooks/useCity'
 import { usePriceSearch } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
+import { normalizeProductImageUrl } from '@/lib/normalizeProductImageUrl'
 import { formatPrice, type SiteKind } from '@/lib/searchResults'
 
 type ProductSearch = {
@@ -71,6 +72,7 @@ function ProductPage() {
   }
 
   const { site, product } = result
+  const imageUrl = normalizeProductImageUrl(product.imageUrl)
 
   return (
     <div className="min-h-screen bg-white px-4 py-5 sm:px-6">
@@ -86,8 +88,8 @@ function ProductPage() {
         <div className={cn('mb-6 inline-flex rounded-full border px-4 py-1.5 text-sm font-medium', tone[site.kind])}>{site.name}</div>
 
         <article className="border-gray-blue overflow-hidden rounded-3xl border bg-white">
-          {product.imageUrl ? (
-            <img src={product.imageUrl} alt="" className="mx-auto h-72 w-full max-w-md object-contain sm:h-96" />
+          {imageUrl ? (
+            <img src={imageUrl} alt="" referrerPolicy="no-referrer" className="mx-auto h-72 w-full max-w-md object-contain sm:h-96" />
           ) : (
             <div className={cn('flex h-72 items-center justify-center text-lg font-semibold sm:h-96', imageTone[site.kind])}>Нет изображения</div>
           )}

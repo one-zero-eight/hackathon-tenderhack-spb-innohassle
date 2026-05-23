@@ -134,6 +134,14 @@ $defs:
         default: false
         title: Fetch Details
         type: boolean
+      composer_search:
+        default: true
+        title: Composer Search
+        type: boolean
+      composer_raw:
+        default: true
+        title: Composer Raw
+        type: boolean
       cookies_file:
         anyOf:
         - type: string

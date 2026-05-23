@@ -5,21 +5,57 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlparse
 
 from src.api.parsers.ozon.titles import is_valid_ozon_product_title
 
 logger = logging.getLogger(__name__)
 
 OZON_HOME = "https://www.ozon.ru/"
+COMPOSER_API_ENDPOINT = f"{OZON_HOME}api/composer-api.bx/page/json/v2"
+
+COMPOSER_HTTP_HEADERS = {
+    "accept": "application/json",
+    "x-o3-app-name": "dweb_search",
+}
+
+
+def composer_api_url(path: str) -> str:
+    return f"{COMPOSER_API_ENDPOINT}?url={quote(path, safe='')}"
+
+
+def composer_path_strip_page(path: str) -> str:
+    if "?" not in path:
+        return path
+    pathname, query = path.split("?", 1)
+    pairs = [(key, value) for key, value in parse_qsl(query, keep_blank_values=True) if key != "page"]
+    return pathname + (f"?{urlencode(pairs)}" if pairs else "")
+
+
+def composer_path_with_page(path: str, page: int) -> str:
+    if page <= 1:
+        return path
+    base = composer_path_strip_page(path)
+    sep = "&" if "?" in base else "?"
+    if "page=" in base:
+        return base
+    return f"{base}{sep}page={page}"
+
 
 FETCH_COMPOSER_JS = """
-async () => {
-  const path = window.location.pathname + window.location.search;
+async (explicitPath) => {
+  const path = explicitPath || (window.location.pathname + window.location.search);
   try {
     const r = await fetch(
       '/api/composer-api.bx/page/json/v2?url=' + encodeURIComponent(path),
-      { credentials: 'include', headers: { accept: 'application/json' } }
+      {
+        credentials: 'include',
+        headers: {
+          accept: 'application/json',
+          'x-o3-app-name': 'dweb_search',
+        },
+        referrer: window.location.href,
+      }
     );
     if (!r.ok) return { __error: r.status };
     return await r.json();
@@ -28,6 +64,29 @@ async () => {
   }
 }
 """
+
+
+def composer_listing_rows(payload: object, *, limit: int) -> list[dict[str, Any]]:
+    """Ordered listing rows from a composer-api search payload."""
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in parse_composer_search(payload):
+        url = normalize_product_url(str(item.get("url") or ""))
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        rows.append(
+            {
+                "url": url,
+                "title": item.get("title") or "Без названия",
+                "price": item.get("price"),
+                "originalPrice": item.get("originalPrice"),
+                "image": item.get("image"),
+            }
+        )
+        if len(rows) >= limit:
+            break
+    return rows
 
 
 def normalize_product_url(href: str) -> str | None:
@@ -53,15 +112,126 @@ def parse_composer_search(payload: object) -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for raw in widgets.values():
+    for key, raw in widgets.items():
         state: object = raw
         if isinstance(raw, str):
             try:
                 state = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-        _walk_widget(state, out, seen)
+        if isinstance(key, str) and key.startswith("tileGridDesktop") and isinstance(state, dict):
+            _parse_tile_grid_state(state, out, seen)
+    if not out:
+        for raw in widgets.values():
+            state: object = raw
+            if isinstance(raw, str):
+                try:
+                    state = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+            _walk_widget(state, out, seen)
     return out
+
+
+def _parse_tile_grid_state(state: dict[str, Any], out: list[dict[str, Any]], seen: set[str]) -> None:
+    items = state.get("items")
+    if not isinstance(items, list):
+        tiles = state.get("tiles")
+        items = tiles if isinstance(tiles, list) else []
+    for tile in items:
+        if not isinstance(tile, dict):
+            continue
+        _maybe_append_tile(tile, out, seen)
+
+
+def _maybe_append_tile(tile: dict[str, Any], out: list[dict[str, Any]], seen: set[str]) -> None:
+    url = _pick_url(tile)
+    if not url or url in seen:
+        return
+    main = tile.get("mainState")
+    sale_price, original_price = _pick_prices_from_main_state(main)
+    title = _pick_title_from_main_state(main) or _pick_title(tile)
+    if not title and not sale_price:
+        return
+    seen.add(url)
+    out.append(
+        {
+            "url": url,
+            "title": title or "Без названия",
+            "price": sale_price,
+            "originalPrice": original_price,
+            "image": _pick_image(tile) or _pick_tile_image(tile),
+        }
+    )
+
+
+def _pick_tile_image(tile: dict[str, Any]) -> str | None:
+    tile_image = tile.get("tileImage")
+    if isinstance(tile_image, dict):
+        for key in ("image", "link", "url"):
+            value = tile_image.get(key)
+            if isinstance(value, str) and value.startswith("http"):
+                return value
+        items = tile_image.get("items")
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    src = item.get("link") or item.get("url") or item.get("image")
+                    if isinstance(src, str) and src.startswith("http"):
+                        return src
+    return None
+
+
+def _pick_prices_from_main_state(main: object) -> tuple[str | None, str | None]:
+    if not isinstance(main, list):
+        return None, None
+    sale: str | None = None
+    original: str | None = None
+    for block in main:
+        if not isinstance(block, dict) or block.get("type") != "priceV2":
+            continue
+        price_v2 = block.get("priceV2")
+        if not isinstance(price_v2, dict):
+            continue
+        entries = price_v2.get("price")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            text = entry.get("text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            style = str(entry.get("textStyle") or "").upper()
+            if style == "ORIGINAL_PRICE":
+                original = text.strip()
+            elif sale is None:
+                sale = text.strip()
+    return sale, original
+
+
+def _pick_title_from_main_state(main: object) -> str | None:
+    if not isinstance(main, list):
+        return None
+    candidates: list[str] = []
+    for block in main:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "textAtom":
+            text_atom = block.get("textAtom")
+            if isinstance(text_atom, dict):
+                text = text_atom.get("text")
+                if isinstance(text, str):
+                    candidates.append(text.strip()[:500])
+        atom = block.get("atom")
+        if isinstance(atom, dict):
+            text = atom.get("text")
+            if isinstance(text, str):
+                candidates.append(text.strip()[:500])
+    for text in candidates:
+        if is_valid_ozon_product_title(text):
+            return text
+    return candidates[0] if candidates else None
 
 
 def composer_items_by_url(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -141,6 +311,9 @@ def _pick_title(obj: dict[str, Any]) -> str | None:
             if isinstance(title, str) and is_valid_ozon_product_title(title):
                 candidates.append(title.strip()[:500])
     main = obj.get("mainState")
+    title_from_main = _pick_title_from_main_state(main)
+    if title_from_main:
+        candidates.append(title_from_main)
     if isinstance(main, list):
         for block in main:
             if not isinstance(block, dict):
@@ -169,6 +342,9 @@ def _pick_price_text(obj: dict[str, Any]) -> str | None:
                 if text:
                     return text
     main = obj.get("mainState")
+    sale, _ = _pick_prices_from_main_state(main)
+    if sale:
+        return sale
     if isinstance(main, list):
         for block in main:
             if not isinstance(block, dict):

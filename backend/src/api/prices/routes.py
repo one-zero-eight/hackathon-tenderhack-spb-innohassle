@@ -8,9 +8,16 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from fastapi_derive_responses import AutoDeriveResponsesAPIRoute
 
-from src.api.parsers import iter_ozon_products, iter_wildberries_products, iter_yandex_market_products
+from src.api.parsers import (
+    iter_ozon_composer_pages,
+    iter_ozon_products,
+    iter_wildberries_products,
+    iter_yandex_market_products,
+)
 from src.api.parsers.relevance_filter import filter_relevant
 from src.api.parsers.spellcheck import spellcheck
+from src.api.parsers.ozon.composer_products import collect_products_from_composer_pages
+from src.config import ozon_settings
 from src.schemas import PriceSearchRequest, ProductPrice
 
 logger = logging.getLogger(__name__)
@@ -31,6 +38,22 @@ OZON_SOURCE = "Ozon"
 
 def _ndjson_line(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False) + "\n"
+
+
+async def _maybe_filter_relevant(
+    payload: PriceSearchRequest,
+    query: str,
+    batch: list[dict],
+) -> list[dict]:
+    if payload.bypass_relevance_filter or not batch:
+        return batch
+    return await filter_relevant(query, batch)
+
+
+def _ozon_composer_raw_enabled(payload: PriceSearchRequest) -> bool:
+    if payload.ozon_composer_raw is not None:
+        return payload.ozon_composer_raw
+    return ozon_settings.composer_raw and ozon_settings.composer_search
 
 
 @router.post("/search")
@@ -82,6 +105,11 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
 
     queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue()
     sources_done = 0
+    source_product_counts: dict[str, int] = {
+        YANDEX_SOURCE: 0,
+        WILDBERRIES_SOURCE: 0,
+        OZON_SOURCE: 0,
+    }
 
     async def pump_yandex() -> None:
         started = time.perf_counter()
@@ -93,10 +121,10 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
                 payload.skip,
                 location=payload.location,
             ):
-                if not payload.bypass_relevance_filter:
-                    batch = await filter_relevant(query, batch)
+                batch = await _maybe_filter_relevant(payload, query, batch)
                 prices = _products_from_raw(YANDEX_SOURCE, batch)
                 if prices:
+                    source_product_counts[YANDEX_SOURCE] += len(prices)
                     await queue.put(
                         (
                             "batch",
@@ -114,10 +142,11 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
             elapsed = time.perf_counter() - started
             source_timings[YANDEX_SOURCE] = elapsed
             logger.info(
-                "Price search %s finished in %.2fs (query=%r, error=%s)",
+                "Price search %s finished in %.2fs (query=%r, products=%d, error=%s)",
                 YANDEX_SOURCE,
                 elapsed,
                 query,
+                source_product_counts[YANDEX_SOURCE],
                 error or "none",
             )
 
@@ -131,10 +160,10 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
                 payload.skip,
                 location=payload.location,
             ):
-                if not payload.bypass_relevance_filter:
-                    batch = await filter_relevant(query, batch)
+                batch = await _maybe_filter_relevant(payload, query, batch)
                 prices = _products_from_raw(WILDBERRIES_SOURCE, batch)
                 if prices:
+                    source_product_counts[WILDBERRIES_SOURCE] += len(prices)
                     await queue.put(
                         (
                             "batch",
@@ -152,50 +181,144 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
             elapsed = time.perf_counter() - started
             source_timings[WILDBERRIES_SOURCE] = elapsed
             logger.info(
-                "Price search %s finished in %.2fs (query=%r, error=%s)",
+                "Price search %s finished in %.2fs (query=%r, products=%d, error=%s)",
                 WILDBERRIES_SOURCE,
                 elapsed,
                 query,
+                source_product_counts[WILDBERRIES_SOURCE],
                 error or "none",
             )
 
     async def pump_ozon() -> None:
         started = time.perf_counter()
         error: str | None = None
+        composer_pages = 0
+        ozon_batch_size = 10
         try:
-            async for batch in iter_ozon_products(
-                query,
-                payload.limit,
-                payload.skip,
-                location=payload.location,
-            ):
-                if not payload.bypass_relevance_filter:
-                    batch = await filter_relevant(query, batch)
-                prices = _products_from_raw(OZON_SOURCE, batch)
-                if prices:
-                    await queue.put(
-                        (
-                            "batch",
-                            {"source": OZON_SOURCE, "prices": prices},
-                        ),
+            if _ozon_composer_raw_enabled(payload):
+                pages: list[dict] = []
+                async for page in iter_ozon_composer_pages(
+                    query,
+                    payload.limit,
+                    skip=payload.skip,
+                    location=payload.location,
+                ):
+                    composer_pages += 1
+                    pages.append(page)
+                    if payload.include_ozon_composer_data:
+                        await queue.put(
+                            (
+                                "ozon_composer",
+                                {
+                                    "source": OZON_SOURCE,
+                                    "page": page.get("page"),
+                                    "path": page.get("path"),
+                                    "composer_url": page.get("composer_url"),
+                                    "browser_url": page.get("browser_url"),
+                                    "data": page.get("data"),
+                                },
+                            ),
+                        )
+
+                rows = collect_products_from_composer_pages(
+                    pages,
+                    limit=payload.limit,
+                    skip=payload.skip,
+                )
+                if len(rows) < payload.limit:
+                    logger.warning(
+                        "Ozon composer HTTP: only %d/%d products for %r (no DOM fallback)",
+                        len(rows),
+                        payload.limit,
+                        query,
                     )
-            await queue.put(("source_done", {"source": OZON_SOURCE, "error": None}))
+
+                pending: list[dict] = []
+                for row in rows:
+                    pending.append(row)
+                    if len(pending) >= ozon_batch_size:
+                        filtered = await _maybe_filter_relevant(payload, query, pending)
+                        prices = _products_from_raw(OZON_SOURCE, filtered)
+                        if prices:
+                            source_product_counts[OZON_SOURCE] += len(prices)
+                            await queue.put(
+                                ("batch", {"source": OZON_SOURCE, "prices": prices}),
+                            )
+                        pending = []
+                if pending:
+                    filtered = await _maybe_filter_relevant(payload, query, pending)
+                    prices = _products_from_raw(OZON_SOURCE, filtered)
+                    if prices:
+                        source_product_counts[OZON_SOURCE] += len(prices)
+                        await queue.put(
+                            ("batch", {"source": OZON_SOURCE, "prices": prices}),
+                        )
+
+                await queue.put(
+                    (
+                        "source_done",
+                        {
+                            "source": OZON_SOURCE,
+                            "error": None,
+                            "composer_http": True,
+                            "composer_pages": composer_pages,
+                        },
+                    ),
+                )
+            else:
+                async for batch in iter_ozon_products(
+                    query,
+                    payload.limit,
+                    payload.skip,
+                    location=payload.location,
+                ):
+                    batch = await _maybe_filter_relevant(payload, query, batch)
+                    prices = _products_from_raw(OZON_SOURCE, batch)
+                    if prices:
+                        source_product_counts[OZON_SOURCE] += len(prices)
+                        await queue.put(
+                            (
+                                "batch",
+                                {"source": OZON_SOURCE, "prices": prices},
+                            ),
+                        )
+                await queue.put(("source_done", {"source": OZON_SOURCE, "error": None}))
         except Exception as exc:
             error = str(exc)
             logger.exception("Ozon stream error for %r", query)
             await queue.put(
-                ("source_done", {"source": OZON_SOURCE, "error": error}),
+                (
+                    "source_done",
+                    {
+                        "source": OZON_SOURCE,
+                        "error": error,
+                        "composer_raw": _ozon_composer_raw_enabled(payload),
+                    },
+                ),
             )
         finally:
             elapsed = time.perf_counter() - started
             source_timings[OZON_SOURCE] = elapsed
-            logger.info(
-                "Price search %s finished in %.2fs (query=%r, error=%s)",
-                OZON_SOURCE,
-                elapsed,
-                query,
-                error or "none",
-            )
+            if _ozon_composer_raw_enabled(payload):
+                logger.info(
+                    "Price search %s finished in %.2fs (query=%r, composer_pages=%d, "
+                    "products=%d, error=%s)",
+                    OZON_SOURCE,
+                    elapsed,
+                    query,
+                    composer_pages,
+                    source_product_counts[OZON_SOURCE],
+                    error or "none",
+                )
+            else:
+                logger.info(
+                    "Price search %s finished in %.2fs (query=%r, products=%d, error=%s)",
+                    OZON_SOURCE,
+                    elapsed,
+                    query,
+                    source_product_counts[OZON_SOURCE],
+                    error or "none",
+                )
 
     tasks = [
         asyncio.create_task(pump_yandex()),
@@ -225,15 +348,20 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
 
     parsers_sec = time.perf_counter() - parsers_started
     total_sec = time.perf_counter() - request_started
+    total_products = sum(source_product_counts.values())
     logger.info(
-        "Price search finished in %.2fs (query=%r): "
-        "Yandex Market=%.2fs, Wildberries=%.2fs, Ozon=%.2fs, "
+        "Price search finished in %.2fs (query=%r, total_products=%d): "
+        "Yandex Market=%.2fs (%d), Wildberries=%.2fs (%d), Ozon=%.2fs (%d), "
         "parsers_parallel=%.2fs, spellcheck=%.2fs",
         total_sec,
         payload.query,
+        total_products,
         source_timings.get(YANDEX_SOURCE, 0.0),
+        source_product_counts[YANDEX_SOURCE],
         source_timings.get(WILDBERRIES_SOURCE, 0.0),
+        source_product_counts[WILDBERRIES_SOURCE],
         source_timings.get(OZON_SOURCE, 0.0),
+        source_product_counts[OZON_SOURCE],
         parsers_sec,
         spellcheck_sec,
     )

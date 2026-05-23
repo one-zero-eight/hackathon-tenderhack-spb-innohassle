@@ -203,6 +203,27 @@ class BrowserSessionPool:
         ):
             yield batch  # type: ignore[misc]
 
+    async def iter_ozon_composer_pages(
+        self,
+        query: str,
+        limit: int,
+        *,
+        skip: int = 0,
+        location: str | None = None,
+    ) -> AsyncIterator[dict]:
+        from src.api.parsers.ozon.stream import iter_ozon_composer_raw
+
+        async for page in self._ozon.run_stream(
+            lambda parser: iter_ozon_composer_raw(
+                parser,
+                query,
+                limit,
+                skip=skip,
+                location=location,
+            ),
+        ):
+            yield page  # type: ignore[misc]
+
     async def shutdown(self) -> None:
         await asyncio.gather(self._wb.shutdown(), self._ozon.shutdown())
         logger.info("Browser session pool stopped")
@@ -230,6 +251,7 @@ class BrowserSessionPool:
             page_load_timeout=ozon_settings.page_load_timeout,
             element_wait_timeout=ozon_settings.element_wait_timeout,
             page_load_retries=ozon_settings.page_load_retries,
+            composer_search=ozon_settings.composer_search,
             keep_alive=True,
         )
         await parser.start()

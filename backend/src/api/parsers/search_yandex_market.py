@@ -11,6 +11,10 @@ from urllib.parse import urljoin
 import httpx
 
 from src.api.parsers.ozon.user_agent import pick_user_agent
+<<<<<<< HEAD
+=======
+from src.api.parsers.geocoder import resolve_ym_region
+>>>>>>> 35adfd8 (fix)
 from src.config import yandex_market_settings
 
 logger = logging.getLogger(__name__)

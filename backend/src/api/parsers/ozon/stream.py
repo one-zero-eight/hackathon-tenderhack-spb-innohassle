@@ -88,12 +88,6 @@ async def iter_ozon_search(
             yield pending
         return
 
-    if parser.keep_alive:
-        try:
-            await parser.warmup_session()
-        except Exception as exc:
-            logger.warning("Ozon warmup before search failed: %s", exc)
-
     city = resolve_ozon_city(location)
     await parser._apply_delivery_city(city)
     await parser.search(query)

@@ -304,6 +304,16 @@ class OzonParser:
             logger.error("Ozon cookies reload failed: %s", exc)
             return False
 
+    async def _clear_storage_and_reload_cookies(self) -> bool:
+        try:
+            await evaluate(
+                self._p,
+                "() => { try { localStorage.clear(); sessionStorage.clear(); } catch (e) {} }",
+            )
+        except Exception:
+            pass
+        return await self._reload_cookies()
+
     async def _goto(
         self,
         url: str,
@@ -327,6 +337,13 @@ class OzonParser:
         if await self._is_blocked():
             if cookies_retry and await self._reload_cookies():
                 logger.warning("Ozon blocked at %s — retrying after cookie reload", url)
+                await self._goto(url, fast=fast, cookies_retry=False)
+                return
+            if cookies_retry and await self._clear_storage_and_reload_cookies():
+                logger.warning(
+                    "Ozon blocked at %s — retrying after storage clear + cookies",
+                    url,
+                )
                 await self._goto(url, fast=fast, cookies_retry=False)
                 return
             raise OzonAccessError(
@@ -392,29 +409,22 @@ class OzonParser:
         except Exception as exc:
             logger.warning("Ozon failed to set delivery city %r: %s", city, exc)
 
-    async def search(self, query: str) -> None:
-        logger.info("Поиск: %s", query)
-        search_url = f"{OZON_HOME}search/?text={quote(query)}&from_global=true"
+    async def _open_search_serp(self, search_url: str, *, fast: bool | None = None) -> None:
         cards_timeout = self._serp_wait_timeout()
-
-        # Pooled sessions: search via homepage input (less aggressive than direct SERP URL).
-        if self.keep_alive and not self.slow_mode:
-            try:
-                await self._search_via_input(query)
-                return
-            except OzonAccessError:
-                raise
-            except Exception as exc:
-                logger.warning(
-                    "Ozon search via input failed (%s), trying direct SERP URL",
-                    exc,
-                )
+        last_timeout: TimeoutError | None = None
 
         for attempt in range(1, 3):
             logger.info("Ozon SERP load attempt %d/2", attempt)
-            await self._goto(search_url)
+            try:
+                await self._goto(search_url, fast=fast)
+            except OzonAccessError:
+                if attempt < 2 and await self._clear_storage_and_reload_cookies():
+                    continue
+                raise
             await self._dismiss_overlays()
             if await self._is_blocked():
+                if attempt < 2 and await self._clear_storage_and_reload_cookies():
+                    continue
                 raise OzonAccessError(
                     f"Ozon ограничил доступ при поиске ({await self._page_context()})",
                     url=search_url,
@@ -423,7 +433,8 @@ class OzonParser:
                 await self._wait_serp_ready(cards_timeout)
                 await self._wait_serp_settled()
                 return
-            except TimeoutError:
+            except TimeoutError as exc:
+                last_timeout = exc
                 logger.warning(
                     "Ozon SERP not ready (%s, attempt %d/2)",
                     await self._page_context(),
@@ -432,19 +443,50 @@ class OzonParser:
                 if attempt < 2:
                     await asyncio.sleep(0.4)
 
-        if not self.keep_alive:
-            await self._search_via_input(query)
-            return
-
         if await self._is_blocked():
             raise OzonAccessError(
                 f"Ozon ограничил доступ ({await self._page_context()})",
                 url=search_url,
             )
+        if last_timeout is not None:
+            raise OzonAccessError(
+                f"Ozon: товары в выдаче не появились ({await self._page_context()})",
+                url=search_url,
+            ) from last_timeout
         raise OzonAccessError(
             f"Ozon: товары в выдаче не появились ({await self._page_context()})",
             url=search_url,
         )
+
+    async def search(self, query: str) -> None:
+        logger.info("Поиск: %s", query)
+        search_url = f"{OZON_HOME}search/?text={quote(query)}&from_global=true"
+
+        # Pooled sessions: direct SERP first (homepage is often antibot-blocked).
+        if self.keep_alive and not self.slow_mode:
+            try:
+                await self._open_search_serp(search_url, fast=True)
+                return
+            except (OzonAccessError, TimeoutError) as exc:
+                logger.warning("Ozon direct SERP failed (%s), trying homepage input", exc)
+            try:
+                await self._search_via_input(query)
+                return
+            except (OzonAccessError, Exception) as exc:
+                logger.warning(
+                    "Ozon homepage input failed (%s), last try: direct SERP",
+                    exc,
+                )
+            await self._open_search_serp(search_url, fast=True)
+            return
+
+        try:
+            await self._open_search_serp(search_url)
+        except OzonAccessError:
+            if not self.keep_alive:
+                await self._search_via_input(query)
+                return
+            raise
 
     async def _try_fill_search_input(self, query: str) -> bool:
         filled = await evaluate(self._p, FILL_SEARCH_INPUT_JS, query)
@@ -463,12 +505,25 @@ class OzonParser:
         except Exception:
             return False
 
-    async def _search_via_input(self, query: str) -> None:
-        serp_timeout = self._serp_wait_timeout()
-        await self._goto(OZON_HOME, fast=False)
+    async def _ensure_ozon_home(self, *, fast: bool = False) -> None:
+        try:
+            if self._p.url.startswith("https://www.ozon.ru") and not await self._is_blocked():
+                await self._dismiss_overlays()
+                return
+        except Exception:
+            pass
+        await self._goto(OZON_HOME, fast=fast)
         await self._dismiss_overlays()
         if await self._is_blocked():
-            raise OzonAccessError(f"Ozon ограничил доступ ({await self._page_context()})")
+            raise OzonAccessError(
+                f"Ozon ограничил доступ ({await self._page_context()})",
+                url=OZON_HOME,
+            )
+
+    async def _search_via_input(self, query: str) -> None:
+        serp_timeout = self._serp_wait_timeout()
+        use_fast = self.keep_alive and not self.slow_mode
+        await self._ensure_ozon_home(fast=use_fast)
         if not await self._try_fill_search_input(query):
             raise OzonAccessError("Поле поиска не найдено")
         await self._sleep(0.5, 0.9)

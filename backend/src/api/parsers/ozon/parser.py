@@ -64,7 +64,7 @@ class OzonSeleniumParser:
         if slow_mode:
             self.scroll_pause = (2.0, 3.0)
         elif keep_alive:
-            self.scroll_pause = fast_scroll_pause
+            self.scroll_pause = (0.2, 0.35)
         else:
             self.scroll_pause = scroll_pause
         self._nav_retries = 1 if (keep_alive and not slow_mode) else (
@@ -257,14 +257,20 @@ class OzonSeleniumParser:
         except Exception:
             return []
 
+    def _scroll_rounds_for_limit(self, limit: int) -> int:
+        """Ozon virtual list отдаёт ~6–10 карточек за прокрутку — rounds должны расти с limit."""
+        items_per_scroll = 8
+        rounds = (limit + items_per_scroll - 1) // items_per_scroll + 2
+        return max(3, min(rounds, 30))
+
     async def collect_products(self, limit: int) -> list[dict]:
         ordered: list[dict] = []
         seen: set[str] = set()
         stale = 0
         prev_total = 0
-        max_rounds = 2 if self.keep_alive else limit + 2
+        max_rounds = self._scroll_rounds_for_limit(limit)
 
-        logger.info("Прокрутка выдачи для %d товаров...", limit)
+        logger.info("Прокрутка выдачи для %d товаров (до %d раундов)...", limit, max_rounds)
 
         for _rnd in range(max_rounds):
             if _rnd > 0 and await self._is_blocked():

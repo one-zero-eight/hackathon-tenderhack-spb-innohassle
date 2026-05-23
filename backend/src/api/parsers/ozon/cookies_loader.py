@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from selenium.webdriver.remote.webdriver import WebDriver
+from selenium_driverless.webdriver import Chrome
 
 from src.api.parsers.ozon.navigation import safe_get
 
@@ -42,8 +42,8 @@ def load_cookies_file(path: Path) -> list[dict]:
     return cookies
 
 
-def apply_cookies(
-    driver: WebDriver,
+async def apply_cookies(
+    driver: Chrome,
     cookies_path: Path,
     *,
     base_url: str = "https://www.ozon.ru",
@@ -53,7 +53,7 @@ def apply_cookies(
 ) -> int:
     """Загружает cookies в браузер (сначала открывает домен)."""
     cookies = load_cookies_file(cookies_path)
-    safe_get(
+    await safe_get(
         driver,
         base_url,
         via_proxy=via_proxy,
@@ -63,11 +63,11 @@ def apply_cookies(
     added = 0
     for cookie in cookies:
         try:
-            driver.add_cookie(cookie)
+            await driver.add_cookie(cookie)
             added += 1
         except Exception:
             continue
-    driver.refresh()
+    await driver.refresh()
     return added
 
 

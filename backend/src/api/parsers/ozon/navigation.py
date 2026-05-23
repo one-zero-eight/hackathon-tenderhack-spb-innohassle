@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from selenium.common.exceptions import TimeoutException, WebDriverException
-from selenium.webdriver.remote.webdriver import WebDriver
+from selenium_driverless.webdriver import Chrome
 
 from src.api.parsers.ozon.exceptions import OzonAccessError
 
@@ -11,42 +10,34 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 90
 PROXY_TIMEOUT = 180
-DEFAULT_SCRIPT_TIMEOUT = 60
-PROXY_SCRIPT_TIMEOUT = 90
 DEFAULT_ELEMENT_WAIT = 45
 DEFAULT_RETRIES = 4
 
 
-def configure_timeouts(
-    driver: WebDriver,
-    *,
-    via_proxy: bool,
-    page_load_timeout: int | None = None,
-) -> None:
-    load_timeout = page_load_timeout or (PROXY_TIMEOUT if via_proxy else DEFAULT_TIMEOUT)
-    script_timeout = PROXY_SCRIPT_TIMEOUT if via_proxy else DEFAULT_SCRIPT_TIMEOUT
-    driver.set_page_load_timeout(load_timeout)
-    driver.set_script_timeout(script_timeout)
+def _load_timeout(*, via_proxy: bool, page_load_timeout: int | None) -> float:
+    if page_load_timeout is not None:
+        return float(page_load_timeout)
+    return float(PROXY_TIMEOUT if via_proxy else DEFAULT_TIMEOUT)
 
 
-def safe_get(
-    driver: WebDriver,
+async def safe_get(
+    driver: Chrome,
     url: str,
     *,
     via_proxy: bool = False,
     page_load_timeout: int | None = None,
     retries: int = DEFAULT_RETRIES,
 ) -> None:
-    configure_timeouts(driver, via_proxy=via_proxy, page_load_timeout=page_load_timeout)
+    timeout = _load_timeout(via_proxy=via_proxy, page_load_timeout=page_load_timeout)
     last_exc: Exception | None = None
 
     for attempt in range(1, retries + 1):
         try:
-            driver.get(url)
+            await driver.get(url, wait_load=True, timeout=timeout)
             return
-        except TimeoutException as exc:
+        except TimeoutError as exc:
             last_exc = exc
-            _stop_loading(driver)
+            await _stop_loading(driver)
             logger.warning(
                 "Таймаут загрузки %s (попытка %d/%d)%s",
                 url,
@@ -54,11 +45,11 @@ def safe_get(
                 retries,
                 " — прокси может быть медленным" if via_proxy else "",
             )
-        except WebDriverException as exc:
+        except Exception as exc:
             last_exc = exc
             if "timeout" not in str(exc).lower():
                 raise
-            _stop_loading(driver)
+            await _stop_loading(driver)
             logger.warning("Ошибка загрузки %s (попытка %d/%d): %s", url, attempt, retries, exc)
 
     hint = (
@@ -69,8 +60,8 @@ def safe_get(
     raise OzonAccessError(f"Не удалось открыть: {url}. {hint}", url=url) from last_exc
 
 
-def _stop_loading(driver: WebDriver) -> None:
+async def _stop_loading(driver: Chrome) -> None:
     try:
-        driver.execute_script("window.stop();")
+        await driver.execute_script("window.stop();")
     except Exception:
         pass

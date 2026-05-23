@@ -54,6 +54,8 @@ class OzonSettings(BaseModel):
     "How many times to retry opening a page after timeout"
     fetch_details: bool = False
     "Open each product page to read price (slower, like CLI --details)"
+    cookies_file: str | None = "cookies.json"
+    "Path to cookies.json (relative to settings.yaml or cwd)"
 
     def resolve_proxy(self) -> str | None:
         raw = self.proxy
@@ -63,12 +65,39 @@ class OzonSettings(BaseModel):
             return None
         return raw if "://" in raw else f"http://{raw}"
 
+    def resolve_cookies_path(self, *, settings_dir: Path | None = None) -> Path | None:
+        if not self.cookies_file:
+            return None
+        path = Path(self.cookies_file)
+        candidates = [path]
+        if settings_dir:
+            candidates.append(settings_dir / path)
+        candidates.append(Path.cwd() / path)
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate.resolve()
+        return None
+
+
+class WildberriesSettings(BaseModel):
+    headless: bool = True
+    "Run Chrome without a visible window"
+    chrome_executable_path: str | None = None
+    "Path to Chrome/Chromium executable"
+    page_load_timeout: int = 60
+    "Max seconds to wait for Wildberries page load"
+    element_wait_timeout: int = 45
+    "Max seconds to wait for product cards in search results"
+    page_load_retries: int = 3
+    "How many times to retry opening search after anti-bot or empty page"
+
 
 class Settings(BaseModel):
     model_config = ConfigDict(json_schema_extra={"title": "Settings"}, extra="ignore")
     api_settings: ApiSettings
     auth_settings: AuthSettings
     ozon_settings: OzonSettings = Field(default_factory=OzonSettings)
+    wildberries_settings: WildberriesSettings = Field(default_factory=WildberriesSettings)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "Settings":

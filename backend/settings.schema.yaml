@@ -92,7 +92,39 @@ $defs:
         default: false
         title: Fetch Details
         type: boolean
+      cookies_file:
+        anyOf:
+        - type: string
+        - type: 'null'
+        default: cookies.json
+        title: Cookies File
     title: OzonSettings
+    type: object
+  WildberriesSettings:
+    properties:
+      headless:
+        default: true
+        title: Headless
+        type: boolean
+      chrome_executable_path:
+        anyOf:
+        - type: string
+        - type: 'null'
+        default: null
+        title: Chrome Executable Path
+      page_load_timeout:
+        default: 60
+        title: Page Load Timeout
+        type: integer
+      element_wait_timeout:
+        default: 45
+        title: Element Wait Timeout
+        type: integer
+      page_load_retries:
+        default: 3
+        title: Page Load Retries
+        type: integer
+    title: WildberriesSettings
     type: object
 properties:
   api_settings:
@@ -101,6 +133,8 @@ properties:
     $ref: '#/$defs/AuthSettings'
   ozon_settings:
     $ref: '#/$defs/OzonSettings'
+  wildberries_settings:
+    $ref: '#/$defs/WildberriesSettings'
 required:
 - api_settings
 - auth_settings

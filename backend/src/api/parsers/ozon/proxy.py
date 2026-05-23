@@ -8,16 +8,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-from selenium.webdriver.chrome.options import Options
+from selenium_driverless import webdriver
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class ProxySettings:
-    """Настройки для Chrome --proxy-server."""
+    """Настройки для Chrome --proxy-server (+ расширение при авторизации)."""
 
-    server: str  # http://host:port или socks5://host:port
+    server: str
     username: str | None = None
     password: str | None = None
 
@@ -38,6 +38,7 @@ def parse_proxy(value: str) -> ProxySettings:
       http://127.0.0.1:8080
       socks5://127.0.0.1:1080
       http://user:pass@host:port
+      user:pass@host:port
     """
     raw = value.strip()
     if not raw:
@@ -64,7 +65,7 @@ def parse_proxy(value: str) -> ProxySettings:
 
 
 def _proxy_auth_extension(proxy: ProxySettings) -> Path:
-    """ZIP-расширение Chrome для прокси с логином/паролем."""
+    """ZIP-расширение Chrome для прокси с логином/паролем (без MV3 driverless)."""
     parsed = urlparse(proxy.server)
     host = parsed.hostname or ""
     port = parsed.port or 8080
@@ -116,14 +117,20 @@ chrome.webRequest.onAuthRequired.addListener(
     return zip_path
 
 
-def apply_proxy(options: Options, proxy: ProxySettings | str | None) -> ProxySettings | None:
+def apply_proxy(options: webdriver.ChromeOptions, proxy: ProxySettings | str | None) -> ProxySettings | None:
+    """
+    Настраивает прокси через аргументы Chrome.
+
+    Не используем options.single_proxy: для него driverless ждёт свой MV3 service worker,
+  что в headless часто падает с «Couldn't find mv3 extension within 10 seconds».
+    """
     if not proxy:
         return None
     settings = parse_proxy(proxy) if isinstance(proxy, str) else proxy
 
     if settings.has_auth:
-        ext = _proxy_auth_extension(settings)
-        options.add_extension(str(ext))
+        options.use_extension = False
+        options.add_extension(str(_proxy_auth_extension(settings)))
         logger.info("Прокси с авторизацией: %s", settings.log_safe())
     else:
         options.add_argument(f"--proxy-server={settings.server}")

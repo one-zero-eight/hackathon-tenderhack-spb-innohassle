@@ -23,8 +23,18 @@ async def _run_browser_parsers(query: str, limit: int) -> tuple[list[dict] | Bas
 @router.post("/search")
 async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
     yandex_result, wildberries_result, ozon_result = await asyncio.gather(
-        parse_yandex_market_products(payload.query, payload.limit),
-        parse_wildberries_products(payload.query),
+        parse_yandex_market_products(
+            payload.query,
+            payload.limit,
+            payload.skip,
+            payload.location,
+        ),
+        parse_wildberries_products(
+            payload.query,
+            payload.limit,
+            payload.skip,
+            payload.location,
+        ),
         parse_ozon_products(payload.query, payload.limit),
         return_exceptions=True,
     )

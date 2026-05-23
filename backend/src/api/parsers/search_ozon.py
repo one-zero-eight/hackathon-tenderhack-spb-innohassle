@@ -1,35 +1,21 @@
-import asyncio
 import logging
-import os
 import re
-from pathlib import Path
 
 from src.api.parsers.ozon.exceptions import OzonAccessError
 from src.api.parsers.ozon.parser import OzonSeleniumParser
-from src.config import ozon_settings
+from src.config import ozon_settings, settings_dir
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_COOKIES_PATH = Path(__file__).resolve().parents[3] / "cookies.json"
-
 
 async def parse_ozon_products(query: str, limit: int = 5) -> list[dict]:
-    """Parse Ozon search results asynchronously."""
-    return await asyncio.to_thread(_parse_ozon_products_sync, query, limit)
-
-
-def _parse_ozon_products_sync(query: str, limit: int = 5) -> list[dict]:
+    """Parse Ozon search results asynchronously via selenium-driverless."""
     headless = ozon_settings.headless
     slow_mode = ozon_settings.slow
     proxy = ozon_settings.resolve_proxy()
     fetch_details = ozon_settings.fetch_details
 
-    cookies_path: Path | None = None
-    cookies_env = os.environ.get("OZON_COOKIES_FILE")
-    if cookies_env:
-        cookies_path = Path(cookies_env)
-    elif DEFAULT_COOKIES_PATH.is_file():
-        cookies_path = DEFAULT_COOKIES_PATH
+    cookies_path = ozon_settings.resolve_cookies_path(settings_dir=settings_dir)
 
     parser_limit = max(limit, 3)
     batch_size = max(1, (parser_limit - 1) // 2)
@@ -46,7 +32,7 @@ def _parse_ozon_products_sync(query: str, limit: int = 5) -> list[dict]:
     )
 
     try:
-        with OzonSeleniumParser(
+        async with OzonSeleniumParser(
             headless=headless,
             slow_mode=slow_mode,
             cookies_file=cookies_path,
@@ -55,13 +41,12 @@ def _parse_ozon_products_sync(query: str, limit: int = 5) -> list[dict]:
             element_wait_timeout=ozon_settings.element_wait_timeout,
             page_load_retries=ozon_settings.page_load_retries,
         ) as parser:
-            raw_results = parser.run(
+            raw_results = await parser.run(
                 query,
                 parser_limit,
                 fetch_details=fetch_details,
                 batch_size=batch_size,
             )
-            logger.info(f"Ozon raw results: {raw_results}")
     except (OzonAccessError, ValueError) as exc:
         logger.error("Ozon parse failed for %r: %s", query, exc)
         raise

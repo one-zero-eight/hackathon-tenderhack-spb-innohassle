@@ -6,6 +6,7 @@ import html as html_lib
 import json
 import logging
 import re
+from collections.abc import AsyncIterator
 from urllib.parse import urljoin
 
 import httpx
@@ -126,6 +127,92 @@ async def parse_yandex_market_products(
         return results[skip:target_count]
     except Exception as exc:
         logger.exception("Yandex Market parse failed for %r", query)
+        raise RuntimeError(f"Failed to scrape Yandex Market: {exc}") from exc
+
+
+async def iter_yandex_market_products(
+    query: str,
+    limit: int = 5,
+    skip: int = 0,
+    *,
+    lr: int = YM_MOSCOW_LR,
+    location: str | None = None,
+) -> AsyncIterator[list[dict]]:
+    """Yield Yandex Market products page-by-page as they are parsed."""
+    lr = resolve_ym_region(location)
+    target_count = skip + limit
+    max_pages = min(
+        MAX_YANDEX_PAGES,
+        max(1, (target_count + YANDEX_PAGE_SIZE - 1) // YANDEX_PAGE_SIZE + 2),
+    )
+    seen_products: set[str] = set()
+    skipped_count = 0
+    emitted = 0
+    new_on_page = 0
+
+    logger.info(
+        "Yandex Market stream start: query=%r limit=%d skip=%d lr=%d",
+        query,
+        limit,
+        skip,
+        lr,
+    )
+
+    try:
+        async with _build_client() as client:
+            for page in range(1, max_pages + 1):
+                params: dict[str, object] = {"text": query, "lr": lr}
+                if page > 1:
+                    params["page"] = page
+
+                response = await client.get(YANDEX_SEARCH_URL, params=params)
+                response.raise_for_status()
+
+                page_results = _parse_yandex_market_html(response.text, target_count, skip=0)
+                if not page_results:
+                    logger.info(
+                        "Yandex Market: page %d returned no products, stopping",
+                        page,
+                    )
+                    break
+
+                new_on_page = 0
+                page_batch: list[dict] = []
+                for product in page_results:
+                    product_key = (
+                        product.get("url")
+                        or f"{product.get('name')}:{product.get('sale_price')}"
+                    )
+                    if product_key in seen_products:
+                        continue
+                    seen_products.add(product_key)
+
+                    if skipped_count < skip:
+                        skipped_count += 1
+                        continue
+                    if emitted >= limit:
+                        if page_batch:
+                            yield page_batch
+                        return
+
+                    page_batch.append(product)
+                    emitted += 1
+                    new_on_page += 1
+
+                if page_batch:
+                    yield page_batch
+
+                if emitted >= limit:
+                    return
+
+                if new_on_page == 0:
+                    logger.info(
+                        "Yandex Market: page %d had no new products, stopping",
+                        page,
+                    )
+                    break
+    except Exception as exc:
+        logger.exception("Yandex Market stream failed for %r", query)
         raise RuntimeError(f"Failed to scrape Yandex Market: {exc}") from exc
 
 

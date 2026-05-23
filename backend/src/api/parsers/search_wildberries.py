@@ -1,4 +1,5 @@
 import logging
+from collections.abc import AsyncIterator
 
 from src.api.parsers.browser_session_pool import get_browser_session_pool
 from src.api.parsers.geocoder import resolve_wb_dest
@@ -39,4 +40,25 @@ async def parse_wildberries_products(
         raise RuntimeError(f"Failed to scrape Wildberries: {exc}") from exc
     except RuntimeError as exc:
         logger.error("Wildberries parse failed for %r: %s", keyword, exc)
+        raise RuntimeError(f"Failed to scrape Wildberries: {exc}") from exc
+
+
+async def iter_wildberries_products(
+    keyword: str,
+    limit: int = 5,
+    skip: int = 0,
+    *,
+    dest: int = WB_MOSCOW_DEST,
+    location: str | None = None,
+) -> AsyncIterator[list[dict]]:
+    dest = resolve_wb_dest(location)
+    pool = get_browser_session_pool()
+    try:
+        async for batch in pool.iter_wildberries(keyword, limit, skip=skip, dest=dest):
+            yield batch
+    except WildberriesAccessError as exc:
+        logger.error("Wildberries stream failed for %r: %s", keyword, exc)
+        raise RuntimeError(f"Failed to scrape Wildberries: {exc}") from exc
+    except RuntimeError as exc:
+        logger.error("Wildberries stream failed for %r: %s", keyword, exc)
         raise RuntimeError(f"Failed to scrape Wildberries: {exc}") from exc

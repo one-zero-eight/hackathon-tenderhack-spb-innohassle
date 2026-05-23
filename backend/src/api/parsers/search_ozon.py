@@ -1,4 +1,5 @@
 import logging
+from collections.abc import AsyncIterator
 
 from src.api.parsers.browser_session_pool import get_browser_session_pool
 from src.api.parsers.ozon.exceptions import OzonAccessError
@@ -26,6 +27,26 @@ async def parse_ozon_products(
         )
     except (OzonAccessError, ValueError, RuntimeError) as exc:
         logger.error("Ozon parse failed for %r: %s", query, exc)
+        raise
+
+
+async def iter_ozon_products(
+    query: str,
+    limit: int = 5,
+    skip: int = 0,
+    *,
+    location: str | None = None,
+) -> AsyncIterator[list[dict]]:
+    try:
+        async for batch in get_browser_session_pool().iter_ozon(
+            query,
+            limit,
+            skip=skip,
+            location=location,
+        ):
+            yield batch
+    except (OzonAccessError, ValueError, RuntimeError) as exc:
+        logger.error("Ozon stream failed for %r: %s", query, exc)
         raise
 
 

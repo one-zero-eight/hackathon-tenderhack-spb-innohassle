@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TypeVar
 
 from src.api.parsers.ozon.parser import OzonParser
 from src.api.parsers.ozon.run import run_ozon_search
+from src.api.parsers.ozon.stream import iter_ozon_search
 from src.api.parsers.wildberries.parser import WildberriesSeleniumParser
 from src.config import browser_pool_settings, ozon_settings, settings_dir, wildberries_settings
 
@@ -49,6 +50,18 @@ class _ParserSlotPool[T]:
         slot_index = await self._available.get()
         try:
             return await fn(self._parsers[slot_index])
+        finally:
+            self._available.put_nowait(slot_index)
+
+    async def run_stream(
+        self,
+        fn: Callable[[T], AsyncIterator[object]],
+    ) -> AsyncIterator[object]:
+        await self.ensure_ready()
+        slot_index = await self._available.get()
+        try:
+            async for item in fn(self._parsers[slot_index]):
+                yield item
         finally:
             self._available.put_nowait(slot_index)
 
@@ -157,6 +170,38 @@ class BrowserSessionPool:
             ),
         )
         return result  # type: ignore[return-value]
+
+    async def iter_wildberries(
+        self,
+        keyword: str,
+        limit: int,
+        *,
+        skip: int = 0,
+        dest: int = -1257786,
+    ) -> AsyncIterator[list[dict]]:
+        async for batch in self._wb.run_stream(
+            lambda parser: parser.iter_products(keyword, limit, skip=skip, dest=dest),
+        ):
+            yield batch  # type: ignore[misc]
+
+    async def iter_ozon(
+        self,
+        query: str,
+        limit: int,
+        *,
+        skip: int = 0,
+        location: str | None = None,
+    ) -> AsyncIterator[list[dict]]:
+        async for batch in self._ozon.run_stream(
+            lambda parser: iter_ozon_search(
+                parser,
+                query,
+                limit,
+                skip=skip,
+                location=location,
+            ),
+        ):
+            yield batch  # type: ignore[misc]
 
     async def shutdown(self) -> None:
         await asyncio.gather(self._wb.shutdown(), self._ozon.shutdown())

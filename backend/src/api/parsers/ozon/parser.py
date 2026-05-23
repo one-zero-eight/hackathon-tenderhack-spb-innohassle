@@ -291,6 +291,7 @@ class OzonParser:
             wait_until="commit" if use_fast else "domcontentloaded",
             retries=self._nav_retries,
         )
+        await self._wait_serp_settled()
         if self.slow_mode:
             await self._sleep(2.0, 3.0)
         elif not self.keep_alive:
@@ -319,6 +320,13 @@ class OzonParser:
     async def _wait_serp_ready(self, timeout: float) -> None:
         await wait_for_function(self._p, SERP_PRODUCTS_READY, timeout_sec=timeout, poll_interval_sec=0.15)
 
+    async def _wait_serp_settled(self) -> None:
+        try:
+            await self._p.wait_for_load_state("domcontentloaded", timeout=8_000)
+        except Exception:
+            pass
+        await self._sleep(0.15, 0.3)
+
     async def _apply_delivery_city(self, city: str) -> None:
         if city == "Москва":
             return
@@ -338,6 +346,7 @@ class OzonParser:
             await self._sleep(0.4, 0.7)
             await self._p.get_by_text(city, exact=False).first.click(timeout=5000)
             await self._sleep(0.5, 0.8)
+            await self._wait_serp_settled()
         except Exception as exc:
             logger.warning("Ozon failed to set delivery city %r: %s", city, exc)
 
@@ -357,6 +366,7 @@ class OzonParser:
                 )
             try:
                 await self._wait_serp_ready(cards_timeout)
+                await self._wait_serp_settled()
                 return
             except TimeoutError:
                 logger.warning(
@@ -464,6 +474,8 @@ class OzonParser:
         max_rounds = self._scroll_rounds_for_limit(limit)
 
         logger.info("Прокрутка выдачи для %d товаров (до %d раундов)...", limit, max_rounds)
+
+        await self._wait_serp_settled()
 
         composer_by_url: dict[str, dict] = {}
         try:

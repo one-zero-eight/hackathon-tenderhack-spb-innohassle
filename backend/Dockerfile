@@ -23,6 +23,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 RUN apt-get update \
   && apt-get install --no-install-recommends -y \
+    chromium \
     ca-certificates \
     fonts-liberation \
     libasound2 \
@@ -53,7 +54,8 @@ COPY --from=builder /app/.venv /app/.venv
 RUN mkdir -p /app/data/cloak-profiles \
   && uv run python -m cloakbrowser install
 
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/app/.venv/bin:$PATH" \
+  CHROME_EXECUTABLE_PATH=/usr/bin/chromium
 
 EXPOSE 8000
 CMD ["uv", "run", "--no-sync", "python", "-m", "src.api", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio", "--proxy-headers", "--forwarded-allow-ips=*"]

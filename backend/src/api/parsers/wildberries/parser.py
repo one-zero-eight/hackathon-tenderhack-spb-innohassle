@@ -14,6 +14,7 @@ from src.api.parsers.wait import safe_execute_script, wait_for_script_true
 from src.api.parsers.wildberries.browser import create_driverless_driver
 from src.api.parsers.wildberries.exceptions import WildberriesAccessError
 from src.api.parsers.wildberries.navigation import safe_get
+from src.api.parsers.wildberries.search_api import iter_products_via_browser_api
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +36,21 @@ WB_CARD_COUNT_SCRIPT = (
 )
 # Plain statements only: Selenium prepends "return", so "() => {}" becomes invalid JS.
 WB_SCROLL_JS = """
-const step = Math.max(window.innerHeight * 0.85, 800);
-const list = document.querySelector('.product-list, .catalog-page__content, main');
-if (list && list.scrollHeight > list.clientHeight + 40) {
-  list.scrollTop += step;
+const cards = document.querySelectorAll(
+  '.product-card__wrapper, article.product-card, article[data-nm-id], [data-nm-id]'
+);
+const last = cards[cards.length - 1];
+if (last) {
+  last.scrollIntoView({ block: 'end', behavior: 'instant' });
 } else {
-  window.scrollBy(0, step);
+  window.scrollBy(0, Math.max(window.innerHeight * 0.9, 900));
+}
+window.dispatchEvent(new Event('scroll'));
+const list = document.querySelector(
+  '.product-list, .catalog-page__content, .catalog-page, main'
+);
+if (list && list.scrollHeight > list.clientHeight + 40) {
+  list.scrollTop = list.scrollHeight;
 }
 """
 WB_EXTRACT_JS = """
@@ -348,17 +358,13 @@ class WildberriesSeleniumParser:
                 break
         return products
 
-    async def iter_products(
+    async def _iter_products_from_dom(
         self,
-        keyword: str,
-        limit: int,
         *,
-        skip: int = 0,
-        dest: int = -1257786,
-        batch_size: int = WB_STREAM_BATCH_SIZE,
+        limit: int,
+        skip: int,
+        batch_size: int,
     ) -> AsyncIterator[list[dict]]:
-        logger.info("Wildberries stream: %r (dest=%d)", keyword, dest)
-        await self._open_search_page(keyword, dest=dest)
         target_cards = skip + limit
         max_rounds = self._scroll_rounds_for_target(target_cards)
         seen_keys: set[str] = set()
@@ -366,7 +372,6 @@ class WildberriesSeleniumParser:
         emitted = 0
         pending: list[dict] = []
         stale = 0
-        prev_count = 0
 
         def drain_batches(*, force: bool = False) -> list[list[dict]]:
             nonlocal pending
@@ -380,6 +385,7 @@ class WildberriesSeleniumParser:
             return batches
 
         for rnd in range(max_rounds):
+            prev_seen = len(seen_keys)
             for item in await self._extract_raw_cards():
                 product = self._raw_item_to_product(item)
                 if product is None:
@@ -406,25 +412,78 @@ class WildberriesSeleniumParser:
                         yield batch
                     return
 
-            count = await self._count_product_cards()
-            if count >= target_cards:
-                break
-            if count == prev_count:
+            new_cards = len(seen_keys) - prev_seen
+            if new_cards == 0:
                 stale += 1
             else:
                 stale = 0
-            prev_count = count
-            if stale >= 2:
+            if emitted >= limit:
+                break
+            if stale >= 4:
+                logger.info(
+                    "WB DOM scroll stopped at %d items (no new cards, round %d)",
+                    emitted,
+                    rnd,
+                )
                 break
             if rnd + 1 < max_rounds:
                 await safe_execute_script(self._d, WB_SCROLL_JS)
-                await asyncio.sleep(random.uniform(0.45, 0.85))
+                await asyncio.sleep(random.uniform(0.7, 1.2))
 
         for batch in drain_batches(force=True):
             yield batch
 
+    async def iter_products(
+        self,
+        keyword: str,
+        limit: int,
+        *,
+        skip: int = 0,
+        dest: int = -1257786,
+        batch_size: int = WB_STREAM_BATCH_SIZE,
+    ) -> AsyncIterator[list[dict]]:
+        logger.info("Wildberries stream: %r (dest=%d)", keyword, dest)
+        await self._open_search_page(keyword, dest=dest)
+
+        emitted = 0
+        try:
+            async for batch in iter_products_via_browser_api(
+                self._d,
+                keyword,
+                limit,
+                skip=skip,
+                dest=dest,
+                batch_size=batch_size,
+            ):
+                emitted += len(batch)
+                yield batch
+            if emitted > 0:
+                logger.info(
+                    "Wildberries stream done for %r (limit=%d): %d items (API)",
+                    keyword,
+                    limit,
+                    emitted,
+                )
+                return
+            logger.warning("WB search API returned 0 items for %r, trying DOM", keyword)
+        except Exception as exc:
+            logger.warning(
+                "WB search API via browser failed for %r, DOM fallback: %s",
+                keyword,
+                exc,
+            )
+
+        emitted = 0
+        async for batch in self._iter_products_from_dom(
+            limit=limit,
+            skip=skip,
+            batch_size=batch_size,
+        ):
+            emitted += len(batch)
+            yield batch
+
         logger.info(
-            "Wildberries stream done for %r (limit=%d): %d items",
+            "Wildberries stream done for %r (limit=%d): %d items (DOM)",
             keyword,
             limit,
             emitted,

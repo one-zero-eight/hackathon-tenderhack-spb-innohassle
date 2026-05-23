@@ -428,7 +428,7 @@ def _parse_yandex_market_html(html: str, limit: int = 5, skip: int = 0) -> list[
                             offers.get("highPrice", offers.get("price", price))
                         ),
                         "url": url,
-                        "image_url": offer.get("image", ""),
+                        "image_url": _jsonld_image_url(offer),
                         "source": "Yandex Market",
                     })
                 if len(results) >= limit:
@@ -459,7 +459,7 @@ def _parse_yandex_market_html(html: str, limit: int = 5, skip: int = 0) -> list[
                                         "sale_price": float(price),
                                         "original_price": float(price),
                                         "url": url,
-                                        "image_url": item.get("image", ""),
+                                        "image_url": _jsonld_image_url(item),
                                         "source": "Yandex Market",
                                     })
                                 if len(results) >= limit:
@@ -468,6 +468,19 @@ def _parse_yandex_market_html(html: str, limit: int = 5, skip: int = 0) -> list[
                 pass
 
     return results[:limit]
+
+
+def _merge_picture_entities(entities: dict[str, dict[str, dict]]) -> dict[str, dict]:
+    merged: dict[str, dict] = {}
+    for entity_name in (
+        "avatars_picture",
+        "picture",
+        "mediaItem",
+        "photo",
+        "thumbnail",
+    ):
+        merged.update(entities.get(entity_name, {}))
+    return merged
 
 
 def _parse_apiary_results(html: str, limit: int, skip: int = 0) -> list[dict]:
@@ -481,7 +494,7 @@ def _parse_apiary_results(html: str, limit: int, skip: int = 0) -> list[dict]:
     offers = entities.get("offer", {})
     products = entities.get("product", {})
     vendors = entities.get("vendor", {})
-    pictures = entities.get("avatars_picture", {})
+    pictures = _merge_picture_entities(entities)
 
     visible_ids = _get_visible_entity_ids(entities)
     results = []
@@ -532,13 +545,19 @@ def _parse_apiary_results(html: str, limit: int, skip: int = 0) -> list[dict]:
         vendor_id = offer.get("vendorId") or product.get("vendorId")
         vendor = vendors.get(str(vendor_id), {})
         brand = vendor.get("name") or vendor.get("slug")
+        image_url = (
+            _extract_image_url(offer, pictures)
+            or _extract_image_url(product, pictures)
+            or _extract_image_url(product_show_place, pictures)
+            or _extract_image_url(offer_show_place, pictures)
+        )
         results.append({
             "name": _extract_title(offer) or _extract_title(product) or "N/A",
             "brand": brand if brand else None,
             "sale_price": price,
             "original_price": _extract_original_price(offer) or price,
             "url": url,
-            "image_url": _extract_image_url(offer, pictures) or _extract_image_url(product, pictures),
+            "image_url": image_url,
             "source": "Yandex Market",
         })
 
@@ -613,17 +632,105 @@ def _extract_title(item: dict) -> str | None:
     return None
 
 
-def _extract_image_url(item: dict, pictures: dict[str, dict]) -> str | None:
-    picture_ids = item.get("skuAwarePictures") or item.get("pictures") or []
-    if not isinstance(picture_ids, list):
-        return None
-    for picture_id in picture_ids:
-        if isinstance(picture_id, str) and picture_id.startswith(("http://", "https://", "//")):
-            return _absolute_yandex_url(picture_id)
-        picture = pictures.get(str(picture_id))
-        if picture and picture.get("origUrl"):
-            return _absolute_yandex_url(picture["origUrl"])
+def _jsonld_image_url(item: dict) -> str | None:
+    image = item.get("image")
+    if isinstance(image, str):
+        return _normalize_yandex_image_url(image)
+    if isinstance(image, list):
+        for entry in image:
+            if isinstance(entry, str):
+                normalized = _normalize_yandex_image_url(entry)
+                if normalized:
+                    return normalized
+            if isinstance(entry, dict):
+                normalized = _picture_url_from_entity(entry)
+                if normalized:
+                    return normalized
+    if isinstance(image, dict):
+        return _picture_url_from_entity(image)
     return None
+
+
+def _extract_image_url(item: dict, pictures: dict[str, dict]) -> str | None:
+    refs: list[object] = []
+    for key in (
+        "skuAwarePictures",
+        "pictures",
+        "picture",
+        "mainPicture",
+        "previewPicture",
+        "gallery",
+        "photos",
+        "images",
+    ):
+        value = item.get(key)
+        if value is None:
+            continue
+        if isinstance(value, list):
+            refs.extend(value)
+        else:
+            refs.append(value)
+
+    for ref in refs:
+        if isinstance(ref, str):
+            if ref.startswith(("http://", "https://", "//", "/get-")):
+                normalized = _normalize_yandex_image_url(ref)
+                if normalized:
+                    return normalized
+            picture = pictures.get(ref)
+            if picture:
+                normalized = _picture_url_from_entity(picture)
+                if normalized:
+                    return normalized
+            continue
+        if isinstance(ref, dict):
+            normalized = _picture_url_from_entity(ref)
+            if normalized:
+                return normalized
+            picture_id = ref.get("id")
+            if picture_id is not None:
+                picture = pictures.get(str(picture_id))
+                if picture:
+                    normalized = _picture_url_from_entity(picture)
+                    if normalized:
+                        return normalized
+    return None
+
+
+def _picture_url_from_entity(picture: dict) -> str | None:
+    for key in ("origUrl", "url", "src", "original"):
+        value = picture.get(key)
+        if isinstance(value, str) and value.strip():
+            return _normalize_yandex_image_url(value)
+
+    namespace = picture.get("namespace")
+    group_id = picture.get("groupId")
+    pic_key = picture.get("key")
+    if namespace and group_id is not None and pic_key:
+        ns = str(namespace)
+        if ns == "mpic":
+            ns = "get-mpic"
+        elif not ns.startswith("get-"):
+            ns = f"get-{ns}"
+        built = f"https://avatars.mds.yandex.net/{ns}/{group_id}/{pic_key}/orig"
+        return _normalize_yandex_image_url(built)
+    return None
+
+
+def _normalize_yandex_image_url(url: str) -> str | None:
+    trimmed = url.strip()
+    if not trimmed:
+        return None
+    if trimmed.startswith("//"):
+        return f"https:{trimmed}"
+    if trimmed.startswith("/get-"):
+        return f"https://avatars.mds.yandex.net{trimmed}"
+    broken = re.match(r"^https?://market\.yandex\.ru(/get-[^?#]+)", trimmed, re.IGNORECASE)
+    if broken:
+        return f"https://avatars.mds.yandex.net{broken.group(1)}"
+    if trimmed.startswith("http://") or trimmed.startswith("https://"):
+        return trimmed
+    return _absolute_yandex_url(trimmed)
 
 
 def _absolute_yandex_url(url: str) -> str:

@@ -1,10 +1,22 @@
-import { filterPurchaseNoise } from './filterPurchaseNoise'
+import { filterPurchaseNoise, stripGeoPurchaseSuffix, stripTrailingPurchaseWord } from './filterPurchaseNoise'
 
 const SUGGEST_URL = 'https://suggest.yandex.ru/suggest-ya.cgi'
 const PROXY_URL = '/yandex-suggest'
 const JSONP_TIMEOUT_MS = 8000
+const PURCHASE_PREFIX = 'купить'
 
 type RawSuggestResponse = [string, unknown[]]
+
+function withPurchasePrefix(query: string): string {
+  const trimmed = query.trim()
+  const lower = trimmed.toLowerCase()
+  if (lower === PURCHASE_PREFIX || lower.startsWith(`${PURCHASE_PREFIX} `)) return trimmed
+  return `${PURCHASE_PREFIX} ${trimmed}`
+}
+
+function stripPurchasePrefix(text: string): string {
+  return text.replace(/^(?:купить)(?:\s+|$)/iu, '').trim()
+}
 
 function suggestParams(part: string, callback?: string): URLSearchParams {
   const params = new URLSearchParams({ v: '4', fact: '1', part })
@@ -35,7 +47,17 @@ function parseSuggestBody(text: string): RawSuggestResponse {
 function parseResponse(data: RawSuggestResponse): string[] {
   const rawItems = Array.isArray(data[1]) ? data[1] : []
   const texts = rawItems.map(parseItemText).filter((item): item is string => item !== null)
-  return filterPurchaseNoise(texts)
+  const seen = new Set<string>()
+  const result: string[] = []
+
+  for (const text of filterPurchaseNoise(texts)) {
+    const stripped = stripGeoPurchaseSuffix(stripTrailingPurchaseWord(stripPurchasePrefix(text)))
+    if (!stripped || seen.has(stripped)) continue
+    seen.add(stripped)
+    result.push(stripped)
+  }
+
+  return result
 }
 
 async function fetchViaProxy(part: string, signal?: AbortSignal): Promise<string[]> {
@@ -98,11 +120,13 @@ export async function fetchYandexSuggest(part: string, signal?: AbortSignal): Pr
   const trimmed = part.trim()
   if (!trimmed) return []
 
+  const suggestQuery = withPurchasePrefix(trimmed)
+
   try {
-    return await fetchViaProxy(trimmed, signal)
+    return await fetchViaProxy(suggestQuery, signal)
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') throw err
   }
 
-  return fetchViaJsonp(trimmed, signal)
+  return fetchViaJsonp(suggestQuery, signal)
 }

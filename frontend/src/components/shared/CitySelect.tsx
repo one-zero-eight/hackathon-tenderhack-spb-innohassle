@@ -1,5 +1,6 @@
 import Dropdown from '@/components/ui/Dropdown'
-import { detectCity, filterCities, getDefaultCity, getPopularCities, mergeCityOptions, searchCities, type CityOption } from '@/lib/geo'
+import { useCity } from '@/hooks/useCity'
+import { filterCities, getPopularCities, mergeCityOptions, searchCities, type CityOption } from '@/lib/geo'
 import { useEffect, useMemo, useState } from 'react'
 import { IoLocationSharp } from 'react-icons/io5'
 
@@ -8,43 +9,35 @@ type Props = {
 }
 
 export default function CitySelect({ className }: Props) {
+  const { city, setCity } = useCity()
   const popularCities = useMemo(() => getPopularCities(), [])
-  const defaultCity = useMemo(() => getDefaultCity(), [])
-  const [city, setCity] = useState<CityOption>(defaultCity)
-  const [options, setOptions] = useState<CityOption[]>(popularCities)
   const [search, setSearch] = useState('')
+  const [remoteOptions, setRemoteOptions] = useState<CityOption[]>([])
+  const remoteQuery = search.trim().length >= 2 ? search.trim() : ''
 
-  useEffect(() => {
-    let cancelled = false
-    detectCity().then((found) => {
-      if (!cancelled && found) setCity(found)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
+  const localOptions = useMemo(() => {
     const q = search.trim()
-    if (!q) {
-      setOptions(popularCities)
-      return
-    }
+    if (!q) return popularCities
+    return filterCities(popularCities, q)
+  }, [search, popularCities])
 
-    const local = filterCities(popularCities, q)
-    if (q.length < 2) {
-      setOptions(local)
-      return
-    }
+  useEffect(() => {
+    if (!remoteQuery) return
 
+    let cancelled = false
     const timer = setTimeout(() => {
-      searchCities(q).then((remote) => {
-        setOptions(mergeCityOptions(local, remote))
+      searchCities(remoteQuery).then((remote) => {
+        if (!cancelled) setRemoteOptions(remote)
       })
     }, 150)
 
-    return () => clearTimeout(timer)
-  }, [search, popularCities])
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [remoteQuery])
+
+  const options = useMemo(() => (remoteQuery ? mergeCityOptions(localOptions, remoteOptions) : localOptions), [localOptions, remoteOptions, remoteQuery])
 
   return (
     <Dropdown
@@ -63,11 +56,10 @@ export default function CitySelect({ className }: Props) {
       emptyMessage="Ничего не найдено"
       trailingIcon={<IoLocationSharp size={18} />}
       onSelect={(value) => {
-        const picked = [...options, ...popularCities].find((o) => o.value === value)
+        const picked = [...options, ...popularCities, city].find((o) => o.value === value)
         if (picked) {
           setCity(picked)
           setSearch('')
-          setOptions(popularCities)
         }
       }}
     />

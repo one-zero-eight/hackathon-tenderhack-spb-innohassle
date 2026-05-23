@@ -2,6 +2,7 @@ import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import CitySelect from '@/components/shared/CitySelect'
+import { useCity } from '@/hooks/useCity'
 import { useYandexSuggest } from '@/hooks/useYandexSuggest'
 import { cn } from '@/lib/cn'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -17,6 +18,7 @@ function HomePage() {
   const [searching, setSearching] = useState(false)
   const [suggestOpen, setSuggestOpen] = useState(false)
   const navigate = useNavigate()
+  const { city } = useCity()
   const searchRef = useRef<HTMLDivElement>(null)
   const { items: suggestions, loading: suggestLoading } = useYandexSuggest(query)
 
@@ -25,7 +27,7 @@ function HomePage() {
     if (!trimmed || searching) return
     setSuggestOpen(false)
     setSearching(true)
-    void navigate({ to: '/sites', search: { q: trimmed } })
+    void navigate({ to: '/sites', search: { q: trimmed, location: city.label } })
   }
 
   const onSearch = (e: React.FormEvent) => {
@@ -63,7 +65,7 @@ function HomePage() {
               onFocus={() => setSuggestOpen(true)}
               onBlur={() => window.setTimeout(() => setSuggestOpen(false), 150)}
               leadingIcon={<IoSearch size={22} />}
-              className={cn('h-full min-w-0 flex-1 border-r-0', showSuggestions ? 'rounded-none border-0! bg-transparent px-4 py-3.5' : 'rounded-l-full')}
+              className={cn('h-full min-w-0 flex-1 border-r-0', showSuggestions ? 'rounded-none border-0! bg-transparent px-4 py-3.5 text-black' : 'rounded-l-full')}
               autoComplete="off"
             />
             {query && (

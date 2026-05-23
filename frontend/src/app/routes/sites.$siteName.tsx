@@ -6,11 +6,15 @@ import PriceRangeSlider from '@/components/shared/PriceRangeSlider'
 import { ResultsSkeleton } from '@/components/shared/ResultsSkeleton'
 import SortDropdown from '@/components/shared/SortDropdown'
 import Input from '@/components/ui/Input'
+import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { useCity } from '@/hooks/useCity'
+import { usePriceSearch } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
-import { formatPrice, getSiteBySlug, type Product, type SiteKind, type SiteResult } from '@/lib/searchResults'
+import { formatPrice, type Product, type SiteKind, type SiteResult } from '@/lib/searchResults'
 
 type CategorySearch = {
   q?: string
+  location?: string
 }
 
 type SortValue = 'relevant' | 'price-asc' | 'price-desc' | 'name-asc' | 'name-desc'
@@ -19,6 +23,7 @@ type ViewMode = 'grid' | 'rows'
 export const Route = createFileRoute('/sites/$siteName')({
   validateSearch: (search: Record<string, unknown>): CategorySearch => ({
     q: typeof search.q === 'string' ? search.q : '',
+    location: typeof search.location === 'string' ? search.location : undefined,
   }),
   component: CategoryPage,
 })
@@ -93,42 +98,58 @@ const siteAccent: Record<
 
 function CategoryPage() {
   const { siteName } = Route.useParams()
-  const { q = '' } = Route.useSearch()
+  const { q = '', location: locationParam } = Route.useSearch()
+  const { city, setCity } = useCity()
   const isProductRoute = useRouterState({ select: (state) => /\/sites\/[^/]+\/[^/]+/.test(state.location.pathname) })
-  const site = getSiteBySlug(siteName)
 
-  if (!site) {
+  useEffect(() => {
+    if (locationParam && locationParam !== city.label) {
+      setCity({ id: 0, value: locationParam, label: locationParam })
+    }
+  }, [locationParam, city.label, setCity])
+
+  const location = city.label
+  const { data: sites = [], isLoading, isError } = usePriceSearch({ query: q, location })
+  const site = sites.find((item) => item.slug === siteName)
+
+  if (isProductRoute) return <Outlet />
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-white p-6">
+        <div className="text-gray mx-auto flex max-w-7xl items-center justify-center gap-2 py-12">
+          <LoadingSpinner size="sm" />
+          <span>Загружаем товары…</span>
+        </div>
+        <ResultsSkeleton />
+      </div>
+    )
+  }
+
+  if (isError || !site) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-white p-6">
         <h1 className="text-2xl font-semibold">Категория не найдена</h1>
-        <Link to="/sites" search={{ q }} className="text-main-blue hover:underline">
+        <Link to="/sites" search={{ q, location }} className="text-main-blue hover:underline">
           Вернуться к результатам
         </Link>
       </div>
     )
   }
 
-  if (isProductRoute) return <Outlet />
-
-  return <CategorySiteView key={siteName} site={site} q={q} />
+  return <CategorySiteView key={`${siteName}-${q}`} site={site} q={q} location={location} />
 }
 
-function CategorySiteView({ site, q }: { site: SiteResult; q: string }) {
+function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; location: string }) {
   const accent = siteAccent[site.kind]
   const availableMin = minProductPrice(site.products)
   const availableMax = maxProductPrice(site.products)
-  const [loading, setLoading] = useState(true)
   const [minPrice, setMinPrice] = useState(availableMin)
   const [maxPrice, setMaxPrice] = useState(availableMax)
   const [sort, setSort] = useState<SortValue>('relevant')
   const [view, setView] = useState<ViewMode>('grid')
   const [localQuery, setLocalQuery] = useState('')
   const priceFilterActive = minPrice !== availableMin || maxPrice !== availableMax
-
-  useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 600)
-    return () => clearTimeout(timer)
-  }, [q])
 
   const products = useMemo(() => {
     const filtered = filterProducts(site.products, minPrice, maxPrice)
@@ -148,7 +169,7 @@ function CategorySiteView({ site, q }: { site: SiteResult; q: string }) {
       <header className="border-gray-blue/60 border-b bg-white px-4 py-3 sm:px-6">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 gap-y-2">
           <div className="flex min-w-0 flex-1 items-center gap-5">
-            <Link to="/sites" search={{ q }} className="text-gray flex shrink-0 items-center hover:text-black" aria-label="Назад">
+            <Link to="/sites" search={{ q, location }} className="text-gray flex shrink-0 items-center hover:text-black" aria-label="Назад">
               <IoArrowBack size={20} />
             </Link>
             {site.logo ? <img src={site.logo} alt={site.name} className="h-5 w-auto shrink-0 sm:h-6" /> : <span className="text-base font-semibold">{site.name}</span>}
@@ -230,16 +251,12 @@ function CategorySiteView({ site, q }: { site: SiteResult; q: string }) {
             </div>
           </div>
 
-          {loading ? (
-            <ResultsSkeleton />
-          ) : (
-            <div className={view === 'grid' ? 'grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4' : 'flex flex-col gap-3'}>
-              {products.map((product) => (
-                <ProductCard key={product.id} product={product} siteSlug={site.slug} query={q} layout={view === 'rows' ? 'row' : 'tile'} surface="white" bordered={true} />
-              ))}
-              {products.length === 0 && <p className="text-gray col-span-full">Нет товаров по выбранным фильтрам.</p>}
-            </div>
-          )}
+          <div className={view === 'grid' ? 'grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4' : 'flex flex-col gap-3'}>
+            {products.map((product) => (
+              <ProductCard key={product.id} product={product} siteSlug={site.slug} query={q} location={location} layout={view === 'rows' ? 'row' : 'tile'} surface="white" bordered={true} />
+            ))}
+            {products.length === 0 && <p className="text-gray col-span-full">Нет товаров по выбранным фильтрам.</p>}
+          </div>
         </main>
       </div>
     </div>
@@ -264,9 +281,11 @@ function sortProducts(products: Product[], sort: SortValue) {
 }
 
 function minProductPrice(products: Product[]) {
+  if (products.length === 0) return 0
   return Math.min(...products.map((product) => product.price))
 }
 
 function maxProductPrice(products: Product[]) {
+  if (products.length === 0) return 0
   return Math.max(...products.map((product) => product.price))
 }

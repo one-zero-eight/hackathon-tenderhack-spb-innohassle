@@ -4,7 +4,7 @@
  */
 
 export interface paths {
-    "/auth/register": {
+    "/prices/search": {
         parameters: {
             query?: never;
             header?: never;
@@ -13,100 +13,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Register */
-        post: operations["register_auth_register_post"];
+        /** Search Prices */
+        post: operations["search_prices_prices_search_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/auth/token": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Login */
-        post: operations["login_auth_token_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/refresh": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Refresh Token */
-        post: operations["refresh_token_auth_refresh_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/me": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Me */
-        get: operations["read_me_auth_me_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/users": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Users */
-        get: operations["list_users_users_get"];
-        put?: never;
-        /** Create User */
-        post: operations["create_user_users_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/users/{user_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get User Endpoint */
-        get: operations["get_user_endpoint_users__user_id__get"];
-        put?: never;
-        post?: never;
-        /** Delete User Endpoint */
-        delete: operations["delete_user_endpoint_users__user_id__delete"];
-        options?: never;
-        head?: never;
-        /** Edit User Endpoint */
-        patch: operations["edit_user_endpoint_users__user_id__patch"];
         trace?: never;
     };
 }
@@ -118,88 +30,58 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        /** LoginRequest */
-        LoginRequest: {
-            /** Username */
-            username: string;
-            /** Password */
-            password: string;
+        /** MarketplacePriceResult */
+        MarketplacePriceResult: {
+            /** Source */
+            source: string;
+            /** Prices */
+            prices: components["schemas"]["ProductPrice"][];
+            /** Error */
+            error?: string | null;
         };
-        /** RefreshTokenRequest */
-        RefreshTokenRequest: {
-            /** Refresh Token */
-            refresh_token: string;
+        /** PriceSearchRequest */
+        PriceSearchRequest: {
+            /** Query */
+            query: string;
+            /**
+             * Limit
+             * @default 5
+             */
+            limit: number;
+            /**
+             * Skip
+             * @default 0
+             */
+            skip: number;
+            /**
+             * Location
+             * @description City or region name for location-based pricing (e.g. 'Санкт-Петербург', 'Novosibirsk'). Defaults to Moscow when omitted.
+             */
+            location?: string | null;
         };
-        /** RegisterRequest */
-        RegisterRequest: {
+        /** PriceSearchResponse */
+        PriceSearchResponse: {
+            /** Query */
+            query: string;
+            /** Results */
+            results: components["schemas"]["MarketplacePriceResult"][];
+        };
+        /** ProductPrice */
+        ProductPrice: {
+            /** Source */
+            source: string;
+            /** Price */
+            price: number;
             /** Name */
-            name: string;
-            /** Username */
-            username: string;
-            /**
-             * Email
-             * Format: email
-             */
-            email: string;
-            /** Password */
-            password: string;
-        };
-        /** TokenResponse */
-        TokenResponse: {
-            /** Access Token */
-            access_token: string;
-            /** Refresh Token */
-            refresh_token: string;
-            /**
-             * Auth Scheme
-             * @default bearer
-             */
-            auth_scheme: string;
-            /**
-             * Expires In
-             * @description Access token TTL in seconds
-             */
-            expires_in: number;
-            /**
-             * Refresh Expires In
-             * @description Refresh token TTL in seconds
-             */
-            refresh_expires_in: number;
-        };
-        /** UserCreate */
-        UserCreate: {
-            /** Name */
-            name: string;
-            /** Username */
-            username: string;
-            /**
-             * Email
-             * Format: email
-             */
-            email: string;
-            /** Password */
-            password: string;
-            /**
-             * Is Admin
-             * @default false
-             */
-            is_admin: boolean;
-        };
-        /** UserResponse */
-        UserResponse: {
-            /** Id */
-            id: number;
-            /** Name */
-            name: string;
-            /** Username */
-            username: string;
-            /**
-             * Email
-             * Format: email
-             */
-            email: string;
-            /** Is Admin */
-            is_admin: boolean;
+            name?: string | null;
+            /** Brand */
+            brand?: string | null;
+            /** Original Price */
+            original_price?: number | null;
+            /** Url */
+            url?: string | null;
+            /** Image Url */
+            image_url?: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -218,16 +100,14 @@ export interface components {
     pathItems: never;
 }
 export type SchemaHttpValidationError = components['schemas']['HTTPValidationError'];
-export type SchemaLoginRequest = components['schemas']['LoginRequest'];
-export type SchemaRefreshTokenRequest = components['schemas']['RefreshTokenRequest'];
-export type SchemaRegisterRequest = components['schemas']['RegisterRequest'];
-export type SchemaTokenResponse = components['schemas']['TokenResponse'];
-export type SchemaUserCreate = components['schemas']['UserCreate'];
-export type SchemaUserResponse = components['schemas']['UserResponse'];
+export type SchemaMarketplacePriceResult = components['schemas']['MarketplacePriceResult'];
+export type SchemaPriceSearchRequest = components['schemas']['PriceSearchRequest'];
+export type SchemaPriceSearchResponse = components['schemas']['PriceSearchResponse'];
+export type SchemaProductPrice = components['schemas']['ProductPrice'];
 export type SchemaValidationError = components['schemas']['ValidationError'];
 export type $defs = Record<string, never>;
 export interface operations {
-    register_auth_register_post: {
+    search_prices_prices_search_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -236,47 +116,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RegisterRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TokenResponse"];
-                };
-            };
-            /** @description Email already in use OR Username already in use */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    login_auth_token_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LoginRequest"];
+                "application/json": components["schemas"]["PriceSearchRequest"];
             };
         };
         responses: {
@@ -286,334 +126,8 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TokenResponse"];
+                    "application/json": components["schemas"]["PriceSearchResponse"];
                 };
-            };
-            /** @description Invalid credentials */
-            401: {
-                headers: {
-                    /** @description Bearer */
-                    "WWW-Authenticate"?: string;
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    refresh_token_auth_refresh_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RefreshTokenRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TokenResponse"];
-                };
-            };
-            /** @description Invalid token */
-            401: {
-                headers: {
-                    /** @description Bearer */
-                    "WWW-Authenticate"?: string;
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    read_me_auth_me_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponse"];
-                };
-            };
-            /** @description Invalid token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    list_users_users_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponse"][];
-                };
-            };
-            /** @description Admin only */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    create_user_users_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UserCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponse"];
-                };
-            };
-            /** @description Admin only */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Email already in use OR Username already in use */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_user_endpoint_users__user_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                user_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponse"];
-                };
-            };
-            /** @description Invalid token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description User {user_id} not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_user_endpoint_users__user_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                user_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Cannot delete yourself */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Admin only */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description User {user_id} not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    edit_user_endpoint_users__user_id__patch: {
-        parameters: {
-            query?: {
-                name?: string | null;
-                username?: string | null;
-                email?: string | null;
-                password?: string | null;
-                is_admin?: boolean | null;
-            };
-            header?: never;
-            path: {
-                user_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponse"];
-                };
-            };
-            /** @description No changes provided */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Invalid token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Only admins can change admin flag OR Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description User {user_id} not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Email already in use OR Username already in use */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -7,6 +7,8 @@ const buttonVariants = cva('text-base text-center cursor-pointer transition-colo
     size: {
       sm: 'px-5 py-2',
       md: 'px-5 py-3',
+      lg: 'px-6 py-3.5',
+      xl: 'px-7 py-4',
     },
     variant: {
       primary: 'font-semibold bg-red text-white hover:bg-[color-mix(in_srgb,var(--color-red),#000_10%)]',

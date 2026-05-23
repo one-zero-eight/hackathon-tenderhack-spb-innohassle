@@ -4,6 +4,7 @@
   --color-gray-blue: var(--gray-blue);
   --color-pale-blue: var(--pale-blue);
   --color-red: var(--red);
+  --color-dark-red: var(--dark-red);
   --color-black: var(--black);
   --color-pale-black: var(--pale-black);
 
@@ -23,6 +24,7 @@
   --gray-blue: #d4dbe6;
   --pale-blue: #e7eef7;
   --red: #db2b21;
+  --dark-red: #b3251d;
   --black: #1a1a1a;
   --pale-black: #8c8c8c;
 

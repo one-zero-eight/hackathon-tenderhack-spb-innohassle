@@ -9,12 +9,14 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root';
-import { Route as PreviewsRouteImport } from './routes/previews';
+import { Route as SitesRouteImport } from './routes/sites';
 import { Route as IndexRouteImport } from './routes/index';
+import { Route as SitesSiteNameRouteImport } from './routes/sites.$siteName';
+import { Route as SitesSiteNameProductIdRouteImport } from './routes/sites.$siteName.$productId';
 
-const PreviewsRoute = PreviewsRouteImport.update({
-  id: '/previews',
-  path: '/previews',
+const SitesRoute = SitesRouteImport.update({
+  id: '/sites',
+  path: '/sites',
   getParentRoute: () => rootRouteImport,
 } as any);
 const IndexRoute = IndexRouteImport.update({
@@ -22,40 +24,65 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any);
+const SitesSiteNameRoute = SitesSiteNameRouteImport.update({
+  id: '/$siteName',
+  path: '/$siteName',
+  getParentRoute: () => SitesRoute,
+} as any);
+const SitesSiteNameProductIdRoute = SitesSiteNameProductIdRouteImport.update({
+  id: '/$productId',
+  path: '/$productId',
+  getParentRoute: () => SitesSiteNameRoute,
+} as any);
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute;
-  '/previews': typeof PreviewsRoute;
+  '/sites': typeof SitesRouteWithChildren;
+  '/sites/$siteName': typeof SitesSiteNameRouteWithChildren;
+  '/sites/$siteName/$productId': typeof SitesSiteNameProductIdRoute;
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute;
-  '/previews': typeof PreviewsRoute;
+  '/sites': typeof SitesRouteWithChildren;
+  '/sites/$siteName': typeof SitesSiteNameRouteWithChildren;
+  '/sites/$siteName/$productId': typeof SitesSiteNameProductIdRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   '/': typeof IndexRoute;
-  '/previews': typeof PreviewsRoute;
+  '/sites': typeof SitesRouteWithChildren;
+  '/sites/$siteName': typeof SitesSiteNameRouteWithChildren;
+  '/sites/$siteName/$productId': typeof SitesSiteNameProductIdRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
-  fullPaths: '/' | '/previews';
+  fullPaths:
+    | '/'
+    | '/sites'
+    | '/sites/$siteName'
+    | '/sites/$siteName/$productId';
   fileRoutesByTo: FileRoutesByTo;
-  to: '/' | '/previews';
-  id: '__root__' | '/' | '/previews';
+  to: '/' | '/sites' | '/sites/$siteName' | '/sites/$siteName/$productId';
+  id:
+    | '__root__'
+    | '/'
+    | '/sites'
+    | '/sites/$siteName'
+    | '/sites/$siteName/$productId';
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute;
-  PreviewsRoute: typeof PreviewsRoute;
+  SitesRoute: typeof SitesRouteWithChildren;
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/previews': {
-      id: '/previews';
-      path: '/previews';
-      fullPath: '/previews';
-      preLoaderRoute: typeof PreviewsRouteImport;
+    '/sites': {
+      id: '/sites';
+      path: '/sites';
+      fullPath: '/sites';
+      preLoaderRoute: typeof SitesRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     '/': {
@@ -65,12 +92,48 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    '/sites/$siteName': {
+      id: '/sites/$siteName';
+      path: '/$siteName';
+      fullPath: '/sites/$siteName';
+      preLoaderRoute: typeof SitesSiteNameRouteImport;
+      parentRoute: typeof SitesRoute;
+    };
+    '/sites/$siteName/$productId': {
+      id: '/sites/$siteName/$productId';
+      path: '/$productId';
+      fullPath: '/sites/$siteName/$productId';
+      preLoaderRoute: typeof SitesSiteNameProductIdRouteImport;
+      parentRoute: typeof SitesSiteNameRoute;
+    };
   }
 }
 
+interface SitesSiteNameRouteChildren {
+  SitesSiteNameProductIdRoute: typeof SitesSiteNameProductIdRoute;
+}
+
+const SitesSiteNameRouteChildren: SitesSiteNameRouteChildren = {
+  SitesSiteNameProductIdRoute: SitesSiteNameProductIdRoute,
+};
+
+const SitesSiteNameRouteWithChildren = SitesSiteNameRoute._addFileChildren(
+  SitesSiteNameRouteChildren,
+);
+
+interface SitesRouteChildren {
+  SitesSiteNameRoute: typeof SitesSiteNameRouteWithChildren;
+}
+
+const SitesRouteChildren: SitesRouteChildren = {
+  SitesSiteNameRoute: SitesSiteNameRouteWithChildren,
+};
+
+const SitesRouteWithChildren = SitesRoute._addFileChildren(SitesRouteChildren);
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  PreviewsRoute: PreviewsRoute,
+  SitesRoute: SitesRouteWithChildren,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

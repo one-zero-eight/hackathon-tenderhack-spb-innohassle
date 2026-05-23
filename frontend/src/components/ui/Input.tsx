@@ -1,8 +1,8 @@
 import { cn } from '@/lib/cn'
 import cva, { type VariantProps } from '@/lib/cva'
-import { forwardRef, type InputHTMLAttributes } from 'react'
+import { forwardRef, type InputHTMLAttributes, type ReactNode } from 'react'
 
-const inputVariants = cva('block w-full border-2 border-pale-blue px-5 py-2 text-md placeholder:gray disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:none transition-colors', {
+const inputVariants = cva('w-full border-2 border-pale-blue text-md placeholder:gray transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-50', {
   variants: {
     variant: {
       outline: 'text-gray bg-white',
@@ -12,23 +12,33 @@ const inputVariants = cva('block w-full border-2 border-pale-blue px-5 py-2 text
     size: {
       sm: 'px-2 py-1 text-xs',
       md: 'px-3 py-2 text-sm',
-      lg: 'px-4 py-3 text-base',
+      lg: 'px-4 py-2.5 text-base',
+      xl: 'px-5 py-3 text-lg',
     },
   },
   default: {
-    intent: 'outline',
     size: 'md',
   },
 })
 
 type InputPropsVariants = VariantProps<typeof inputVariants>
-type InputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> & InputPropsVariants & { label?: string | null }
+type InputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> & InputPropsVariants & { label?: string | null; leadingIcon?: ReactNode }
 
-const Input = forwardRef<HTMLInputElement, InputProps>(({ className, variant, size, label = null, disabled, ...props }, ref) => {
+const Input = forwardRef<HTMLInputElement, InputProps>(({ className, variant, size, label = null, disabled, leadingIcon, ...props }, ref) => {
+  const resolvedVariant = disabled ? 'disabled' : variant
+  const fieldClass = inputVariants({ variant: resolvedVariant, size })
+
   return (
-    <div className="w-full space-y-2">
+    <div className={cn('w-full', label && 'space-y-2')}>
       {label && <p className="text-md text-black">{label}</p>}
-      <input ref={ref} className={cn('flex h-full w-full flex-row items-center bg-transparent outline-none', inputVariants({ variant: disabled ? 'disabled' : variant, size, className }))} disabled={disabled} {...props} />
+      {leadingIcon ? (
+        <div className={cn('flex w-full items-center gap-2', fieldClass, className)}>
+          <span className="text-gray flex shrink-0 items-center">{leadingIcon}</span>
+          <input ref={ref} className="placeholder:gray min-w-0 flex-1 border-0 bg-transparent p-0 outline-none disabled:cursor-not-allowed disabled:opacity-50" disabled={disabled} {...props} />
+        </div>
+      ) : (
+        <input ref={ref} className={cn('block', fieldClass, className)} disabled={disabled} {...props} />
+      )}
     </div>
   )
 })

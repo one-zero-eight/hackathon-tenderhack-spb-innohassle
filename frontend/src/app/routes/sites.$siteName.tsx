@@ -13,6 +13,7 @@ import { usePriceSearch } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
 import { getCityLocation, getPopularCities, NO_CITY_OPTION } from '@/lib/geo'
 import { exportSiteProductsToCsv } from '@/lib/exportCsv'
+import { filterProductsByBrands, getBrandFilterOptions } from '@/lib/productBrandFilter'
 import { filterProductsByLocalSearch } from '@/lib/productLocalSearch'
 import { formatPrice, type Product, type SiteKind, type SiteResult } from '@/lib/searchResults'
 
@@ -169,17 +170,32 @@ function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; 
   const [sort, setSort] = useState<SortValue>('relevant')
   const [view, setView] = useState<ViewMode>('grid')
   const [localQuery, setLocalQuery] = useState('')
+  const [selectedBrandIds, setSelectedBrandIds] = useState<Set<string>>(() => new Set())
+  const brandOptions = useMemo(() => getBrandFilterOptions(site.products), [site.products])
   const priceFilterActive = minPrice !== availableMin || maxPrice !== availableMax
+  const brandFilterActive = selectedBrandIds.size > 0
+  const filtersActive = priceFilterActive || brandFilterActive
 
   const products = useMemo(() => {
     const filtered = filterProducts(site.products, minPrice, maxPrice)
-    const byKeywords = filterProductsByLocalSearch(filtered, localQuery)
+    const byBrand = filterProductsByBrands(filtered, selectedBrandIds)
+    const byKeywords = filterProductsByLocalSearch(byBrand, localQuery)
     return sortProducts(byKeywords, sort)
-  }, [site.products, minPrice, maxPrice, sort, localQuery])
+  }, [site.products, minPrice, maxPrice, selectedBrandIds, sort, localQuery])
+
+  const toggleBrand = (brandId: string) => {
+    setSelectedBrandIds((current) => {
+      const next = new Set(current)
+      if (next.has(brandId)) next.delete(brandId)
+      else next.add(brandId)
+      return next
+    })
+  }
 
   const resetFilters = () => {
     setMinPrice(availableMin)
     setMaxPrice(availableMax)
+    setSelectedBrandIds(new Set())
   }
 
   return (
@@ -196,43 +212,81 @@ function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; 
             <span className={cn('shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium', accent.badge)}>{products.length} товаров</span>
           </div>
 
-          <div className="w-full sm:ml-auto sm:w-72">
-            <Input
-              size="md"
-              variant="outline"
-              placeholder="Найти в результатах"
-              value={localQuery}
-              onChange={(e) => setLocalQuery(e.target.value)}
-              leadingIcon={<IoSearch size={18} />}
-              className="border-gray-blue rounded-xl border bg-white text-black"
-            />
+          <div className="w-full sm:ml-auto sm:w-fit">
+            {products.length > 0 && (
+              <button
+                type="button"
+                onClick={() => exportSiteProductsToCsv(site, products, { query: q })}
+                className={cn('bg-pale-blue/45 hover:bg-pale-blue/70 flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-black transition-colors', accent.exportButton)}
+              >
+                <IoDownloadOutline className="shrink-0" size={18} aria-hidden />
+                <span className="whitespace-nowrap">Экспорт</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
 
       <div className="mx-auto grid max-w-7xl lg:grid-cols-[248px_1fr]">
         <aside className="border-gray-blue/60 border-b bg-white p-4 sm:p-5 lg:sticky lg:top-0 lg:h-[calc(100vh-57px)] lg:overflow-y-auto lg:border-r lg:border-b-0">
-          <div className="space-y-3 pt-4">
-            <p className="font-medium text-black">Цена, ₽</p>
-            <PriceRangeSlider
-              min={availableMin}
-              max={availableMax}
-              valueMin={minPrice}
-              valueMax={maxPrice}
-              trackClassName={accent.sliderTrack}
-              fillClassName={accent.sliderFill}
-              thumbClassName={accent.sliderThumb}
-              onChange={({ min, max }) => {
-                setMinPrice(min)
-                setMaxPrice(max)
-              }}
-            />
-            <p className="text-gray text-xs">
-              {'Диапозон: '}
-              {formatPrice(availableMin)} – {formatPrice(availableMax)}
-            </p>
-            {priceFilterActive && (
-              <button type="button" onClick={resetFilters} className={cn('mt-2 w-full cursor-pointer rounded-xl px-4 py-2.5 text-sm font-medium transition-colors', accent.resetButton)}>
+          <div className="space-y-6 pt-4">
+            <div className="space-y-3">
+              <p className="font-medium text-black">Цена, ₽</p>
+              <PriceRangeSlider
+                min={availableMin}
+                max={availableMax}
+                valueMin={minPrice}
+                valueMax={maxPrice}
+                trackClassName={accent.sliderTrack}
+                fillClassName={accent.sliderFill}
+                thumbClassName={accent.sliderThumb}
+                presetRadioRingSelectedClassName={accent.sortRadioRing}
+                presetRadioDotSelectedClassName={accent.sortRadioDot}
+                onChange={({ min, max }) => {
+                  setMinPrice(min)
+                  setMaxPrice(max)
+                }}
+              />
+              <p className="text-gray text-xs">
+                {'Диапазон: '}
+                {formatPrice(availableMin)} – {formatPrice(availableMax)}
+              </p>
+            </div>
+
+            {brandOptions.length > 0 && (
+              <>
+                <hr className="border-gray-blue/60 border-t" />
+
+                <div className="space-y-2">
+                  <p className="font-medium text-black">Бренд</p>
+                  <ul className="max-h-52 space-y-0.5 overflow-y-auto pr-1">
+                    {brandOptions.map((option) => {
+                      const selected = selectedBrandIds.has(option.id)
+
+                      return (
+                        <li key={option.id}>
+                          <button
+                            type="button"
+                            onClick={() => toggleBrand(option.id)}
+                            className="hover:bg-pale-blue/50 flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-1 py-1.5 text-left text-sm text-black transition-colors"
+                            aria-pressed={selected}
+                          >
+                            <span className={cn('flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 transition-colors', selected ? accent.sortRadioRing : 'border-gray-blue')} aria-hidden>
+                              {selected && <span className={cn('h-2 w-2 rounded-xs', accent.sortRadioDot)} />}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                            <span className="text-gray shrink-0 text-xs tabular-nums">{option.count}</span>
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              </>
+            )}
+
+            {filtersActive && (
+              <button type="button" onClick={resetFilters} className={cn('w-full cursor-pointer rounded-xl px-4 py-2.5 text-sm font-medium transition-colors', accent.resetButton)}>
                 Сбросить все
               </button>
             )}
@@ -240,40 +294,42 @@ function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; 
         </aside>
 
         <main className="min-w-0 bg-white p-4 sm:p-5">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <SortDropdown options={sortOptions} value={sort} onChange={(value) => setSort(value as SortValue)} radioRingSelectedClassName={accent.sortRadioRing} radioDotSelectedClassName={accent.sortRadioDot} />
-              {products.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => exportSiteProductsToCsv(site, products, { query: q })}
-                  className={cn('bg-pale-blue/45 hover:bg-pale-blue/70 flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium text-black transition-colors', accent.exportButton)}
-                >
-                  <IoDownloadOutline className="shrink-0" size={18} aria-hidden />
-                  <span className="whitespace-nowrap">Экспорт</span>
-                </button>
-              )}
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="min-w-0 flex-1">
+              <Input
+                size="md"
+                variant="outline"
+                placeholder="Найти в результатах"
+                value={localQuery}
+                onChange={(e) => setLocalQuery(e.target.value)}
+                leadingIcon={<IoSearch size={18} />}
+                className="border-gray-blue/60 w-full rounded-3xl border bg-white text-black"
+              />
             </div>
 
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setView('grid')}
-                className={cn('cursor-pointer rounded-lg p-2 transition-colors', view === 'grid' ? accent.viewActive : 'text-gray hover:bg-pale-blue/60')}
-                aria-pressed={view === 'grid'}
-                aria-label="Плитка"
-              >
-                <IoGridOutline size={20} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setView('rows')}
-                className={cn('cursor-pointer rounded-lg p-2 transition-colors', view === 'rows' ? accent.viewActive : 'text-gray hover:bg-pale-blue/60')}
-                aria-pressed={view === 'rows'}
-                aria-label="Строки"
-              >
-                <IoListOutline size={20} />
-              </button>
+            <div className="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
+              <SortDropdown options={sortOptions} value={sort} onChange={(value) => setSort(value as SortValue)} radioRingSelectedClassName={accent.sortRadioRing} radioDotSelectedClassName={accent.sortRadioDot} />
+
+              <div className="flex items-center gap-0.5 rounded-lg bg-white" role="group" aria-label="Вид списка">
+                <button
+                  type="button"
+                  onClick={() => setView('grid')}
+                  className={cn('transition-color hover:bg-pale-blue/50 cursor-pointer rounded-md p-2', view === 'grid' ? cn(accent.viewActive) : 'text-gray')}
+                  aria-pressed={view === 'grid'}
+                  aria-label="Плитка"
+                >
+                  <IoGridOutline size={20} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView('rows')}
+                  className={cn('hover:bg-pale-blue/50 cursor-pointer rounded-md p-2 transition-colors', view === 'rows' ? cn(accent.viewActive) : 'text-gray')}
+                  aria-pressed={view === 'rows'}
+                  aria-label="Строки"
+                >
+                  <IoListOutline size={20} />
+                </button>
+              </div>
             </div>
           </div>
 

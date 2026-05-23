@@ -110,7 +110,7 @@ class BrowserSessionPool:
             if slot < self._wb.size:
                 await asyncio.sleep(1.5)
 
-        async def warmup_ozon(parser: OzonSeleniumParser) -> None:
+        async def warmup_ozon(parser: OzonParser) -> None:
             try:
                 await parser.warmup_session()
             except Exception as exc:
@@ -139,9 +139,22 @@ class BrowserSessionPool:
         )
         return result  # type: ignore[return-value]
 
-    async def parse_ozon(self, query: str, limit: int) -> list[dict]:
+    async def parse_ozon(
+        self,
+        query: str,
+        limit: int,
+        *,
+        skip: int = 0,
+        location: str | None = None,
+    ) -> list[dict]:
         result = await self._ozon.run(
-            lambda parser: run_ozon_search(parser, query, limit),
+            lambda parser: run_ozon_search(
+                parser,
+                query,
+                limit,
+                skip=skip,
+                location=location,
+            ),
         )
         return result  # type: ignore[return-value]
 

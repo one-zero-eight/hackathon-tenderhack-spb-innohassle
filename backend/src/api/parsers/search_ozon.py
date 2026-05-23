@@ -9,16 +9,33 @@ from src.config import ozon_settings, settings_dir
 logger = logging.getLogger(__name__)
 
 
-async def parse_ozon_products(query: str, limit: int = 5) -> list[dict]:
+async def parse_ozon_products(
+    query: str,
+    limit: int = 5,
+    skip: int = 0,
+    *,
+    location: str | None = None,
+) -> list[dict]:
     """Parse Ozon via pooled CloakBrowser sessions."""
     try:
-        return await get_browser_session_pool().parse_ozon(query, limit)
+        return await get_browser_session_pool().parse_ozon(
+            query,
+            limit,
+            skip=skip,
+            location=location,
+        )
     except (OzonAccessError, ValueError, RuntimeError) as exc:
         logger.error("Ozon parse failed for %r: %s", query, exc)
         raise
 
 
-async def parse_ozon_products_cold(query: str, limit: int = 5) -> list[dict]:
+async def parse_ozon_products_cold(
+    query: str,
+    limit: int = 5,
+    skip: int = 0,
+    *,
+    location: str | None = None,
+) -> list[dict]:
     """One-off parse with a fresh CloakBrowser session (no pool)."""
     cookies_path = ozon_settings.resolve_cookies_path(settings_dir=settings_dir)
     async with OzonParser(
@@ -31,4 +48,4 @@ async def parse_ozon_products_cold(query: str, limit: int = 5) -> list[dict]:
         element_wait_timeout=ozon_settings.element_wait_timeout,
         page_load_retries=ozon_settings.page_load_retries,
     ) as parser:
-        return await run_ozon_search(parser, query, limit)
+        return await run_ozon_search(parser, query, limit, skip=skip, location=location)

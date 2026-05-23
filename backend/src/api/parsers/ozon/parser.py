@@ -15,6 +15,7 @@ from src.api.parsers.cloak_browser import (
     new_pool_profile_dir,
     open_cloak_session,
 )
+from src.api.parsers.geocoder import resolve_ozon_city
 from src.api.parsers.ozon.composer_extract import (
     FETCH_COMPOSER_JS,
     composer_items_by_url,
@@ -24,6 +25,7 @@ from src.api.parsers.ozon.composer_extract import (
 from src.api.parsers.ozon.cookies_loader import apply_cookies_to_context
 from src.api.parsers.ozon.exceptions import OzonAccessError
 from src.api.parsers.ozon.models import ProductResult
+from src.api.parsers.ozon.titles import pick_ozon_product_title
 from src.api.parsers.playwright_page import (
     dismiss_buttons,
     evaluate,
@@ -89,21 +91,37 @@ EXTRACT_LISTING_JS = """
     const t = (el.textContent || '').trim();
     return /\\d/.test(t) ? t.slice(0, 80) : null;
   };
+  const JUNK_TITLE = /^(распродажа|скидки?|акци[яи]|новинка|хит|бестселлер|выгодно|премиум|premium|оригинал|суперцена|завтра|осталось)$/i;
+  const isTitleLine = (line) => {
+    if (!line || line.length < 8) return false;
+    if (/₽|руб/i.test(line)) return false;
+    if (/^[\\d\\s%]+$/.test(line)) return false;
+    if (JUNK_TITLE.test(line.trim())) return false;
+    return true;
+  };
   const pickTitle = (a, tile) => {
+    const candidates = [];
     const titled = a.getAttribute('title')?.trim();
-    if (titled && titled.length > 3 && !/₽|руб/i.test(titled)) return titled.slice(0, 500);
-    const nameEl = tile.querySelector(
-      '[class*="tsBody"][class*="500"], [class*="tile-title"], [class*="tsBody"]'
-    );
-    if (nameEl) {
-      const n = (nameEl.textContent || '').trim();
-      if (n.length > 3 && !/₽|руб/i.test(n)) return n.slice(0, 500);
+    if (isTitleLine(titled)) candidates.push(titled);
+    const aria = a.getAttribute('aria-label')?.trim();
+    if (isTitleLine(aria)) candidates.push(aria);
+    for (const sel of [
+      'span[class*="tile-title"]',
+      'span[class*="tsBody500"]',
+      'span[class*="tsBody"][class*="500"]',
+      '[data-widget="searchResultsV2"] a span[class*="tsBody"]',
+    ]) {
+      const el = tile.querySelector(sel);
+      if (!el) continue;
+      const n = (el.textContent || '').trim();
+      if (isTitleLine(n)) candidates.push(n);
     }
     const lines = (a.innerText || '').split('\\n').map((s) => s.trim()).filter(Boolean);
     for (const line of lines) {
-      if (line.length > 3 && !/₽|руб/i.test(line) && !/^[\\d\\s]+$/.test(line)) return line.slice(0, 500);
+      if (isTitleLine(line)) candidates.push(line);
     }
-    return lines[0]?.slice(0, 500) || '';
+    if (!candidates.length) return '';
+    return candidates.sort((x, y) => y.length - x.length)[0].slice(0, 500);
   };
   const out = [];
   const seen = new Set();
@@ -301,6 +319,28 @@ class OzonParser:
     async def _wait_serp_ready(self, timeout: float) -> None:
         await wait_for_function(self._p, SERP_PRODUCTS_READY, timeout_sec=timeout, poll_interval_sec=0.15)
 
+    async def _apply_delivery_city(self, city: str) -> None:
+        if city == "Москва":
+            return
+        logger.info("Ozon: setting delivery city to %r", city)
+        await self._goto(OZON_HOME, fast=False)
+        await self._dismiss_overlays()
+        try:
+            address = self._p.locator(
+                '[data-widget="addressBookBar"], [data-widget="commonAddressBook"]'
+            ).first
+            await address.click(timeout=8000)
+            await self._sleep(0.3, 0.5)
+            field = self._p.locator(
+                'input[placeholder*="город"], input[placeholder*="Населен"], input[type="search"]'
+            ).first
+            await field.fill(city, timeout=5000)
+            await self._sleep(0.4, 0.7)
+            await self._p.get_by_text(city, exact=False).first.click(timeout=5000)
+            await self._sleep(0.5, 0.8)
+        except Exception as exc:
+            logger.warning("Ozon failed to set delivery city %r: %s", city, exc)
+
     async def search(self, query: str) -> None:
         logger.info("Поиск: %s", query)
         search_url = f"{OZON_HOME}search/?text={quote(query)}&from_global=true"
@@ -395,8 +435,14 @@ class OzonParser:
             merged["price"] = composer.get("price")
         if not merged.get("originalPrice"):
             merged["originalPrice"] = composer.get("originalPrice")
-        if not merged.get("title") or merged.get("title") == "Без названия":
-            merged["title"] = composer.get("title") or merged.get("title")
+        dom_title = merged.get("title")
+        composer_title = composer.get("title")
+        merged["title"] = (
+            pick_ozon_product_title(composer_title, dom_title)
+            or composer_title
+            or dom_title
+            or "Без названия"
+        )
         if not merged.get("image"):
             merged["image"] = composer.get("image")
         return merged
@@ -548,21 +594,27 @@ class OzonParser:
         query: str,
         limit: int,
         *,
+        skip: int = 0,
+        location: str | None = None,
         fetch_details: bool = False,
         batch_size: int = 4,
     ) -> list[ProductResult]:
-        if fetch_details and limit <= batch_size * 2:
-            raise ValueError(f"Требуется n > 2*m: n={limit}, m={batch_size}")
+        target_count = skip + limit
+        if fetch_details and target_count <= batch_size * 2:
+            raise ValueError(f"Требуется n > 2*m: n={target_count}, m={batch_size}")
 
+        city = resolve_ozon_city(location)
+        await self._apply_delivery_city(city)
         await self.search(query)
-        listing_items = await self.collect_products(limit)
+        listing_items = await self.collect_products(target_count)
+        listing_items = listing_items[skip:target_count]
         if not listing_items:
             raise OzonAccessError("Товары в выдаче не найдены")
 
         if not fetch_details:
             return [
                 ProductResult(
-                    title=i.get("title") or "Без названия",
+                    title=pick_ozon_product_title(i.get("title")) or i.get("title") or "Без названия",
                     url=i["url"],
                     price=i.get("price"),
                     original_price=i.get("originalPrice"),
@@ -570,11 +622,11 @@ class OzonParser:
                     description=None,
                     position=pos,
                 )
-                for pos, i in enumerate(listing_items, start=1)
+                for pos, i in enumerate(listing_items, start=skip + 1)
             ]
 
         results: list[ProductResult] = []
-        for pos, item in enumerate(listing_items, start=1):
+        for pos, item in enumerate(listing_items, start=skip + 1):
             await asyncio.sleep(random.uniform(0.05, 0.1))
             if pos > 1 and (pos - 1) % batch_size == 0:
                 pause = random.uniform(5, 10)

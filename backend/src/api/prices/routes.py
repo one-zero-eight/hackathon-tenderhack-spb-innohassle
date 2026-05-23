@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from fastapi_derive_responses import AutoDeriveResponsesAPIRoute
 
 from src.api.parsers import parse_ozon_products, parse_wildberries_products, parse_yandex_market_products
+from src.api.parsers.spellcheck import spellcheck
 from src.schemas import MarketplacePriceResult, PriceSearchRequest, PriceSearchResponse, ProductPrice
 
 router = APIRouter(prefix="/prices", tags=["Prices"], route_class=AutoDeriveResponsesAPIRoute)
@@ -11,21 +12,28 @@ router = APIRouter(prefix="/prices", tags=["Prices"], route_class=AutoDeriveResp
 
 @router.post("/search")
 async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
+    query = payload.query
+    fixed_query: str | None = None
+    if not payload.bypass_spellchecker:
+        query = await asyncio.to_thread(spellcheck, payload.query)
+        if query != payload.query:
+            fixed_query = query
+
     yandex_result, wildberries_result, ozon_result = await asyncio.gather(
         parse_yandex_market_products(
-            payload.query,
+            query,
             payload.limit,
             payload.skip,
             location=payload.location,
         ),
         parse_wildberries_products(
-            payload.query,
+            query,
             payload.limit,
             payload.skip,
             location=payload.location,
         ),
         parse_ozon_products(
-            payload.query,
+            query,
             payload.limit,
             payload.skip,
             location=payload.location,
@@ -35,6 +43,7 @@ async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
 
     return PriceSearchResponse(
         query=payload.query,
+        fixed_query=fixed_query,
         results=[
             _build_yandex_market_result(yandex_result),
             _build_wildberries_result(wildberries_result),

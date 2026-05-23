@@ -152,6 +152,12 @@ $defs:
         default: 30
         title: Timeout
         type: integer
+      request_retries:
+        default: 3
+        maximum: 6
+        minimum: 1
+        title: Request Retries
+        type: integer
       warmup:
         default: true
         title: Warmup

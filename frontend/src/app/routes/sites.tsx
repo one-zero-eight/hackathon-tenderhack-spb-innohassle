@@ -68,7 +68,7 @@ function SitesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white px-4 py-16 sm:px-6">
+    <div className="min-h-screen bg-white px-4 py-12 sm:px-6">
       <header className="mx-auto mb-8 max-w-7xl">
         <form onSubmit={submitSearch} className="flex w-full flex-col rounded-full sm:flex-row sm:items-stretch">
           <Input size="md" variant="fill" value={query} onChange={(e) => setQuery(e.target.value)} leadingIcon={<IoSearch size={20} />} className="flex flex-1 rounded-l-full border-r-0" />

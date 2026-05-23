@@ -1,71 +1,32 @@
+import { fetchYandexSuggest } from '@/lib/yandexSuggest'
 import { useEffect, useRef, useState } from 'react'
-import {
-  fetchYandexSuggest,
-  type SuggestItem,
-  type SuggestMeta,
-} from '../lib/yandexSuggest'
-
-type State = {
-  items: SuggestItem[]
-  meta?: SuggestMeta
-  loading: boolean
-  error: string | null
-  ready: boolean
-  hiddenCount: number
-}
-
-const emptyState: State = {
-  items: [],
-  loading: false,
-  error: null,
-  ready: false,
-  hiddenCount: 0,
-}
 
 export function useYandexSuggest(query: string, debounceMs = 250) {
-  const [state, setState] = useState<State>(emptyState)
+  const trimmed = query.trim()
+  const [items, setItems] = useState<string[]>([])
+  const [loading, setLoading] = useState(false)
   const requestIdRef = useRef(0)
 
   useEffect(() => {
-    const trimmed = query.trim()
-    if (!trimmed) {
-      setState(emptyState)
-      return
-    }
+    if (!trimmed) return
 
     const requestId = ++requestIdRef.current
     const controller = new AbortController()
 
     const timer = window.setTimeout(() => {
-      setState((prev) => ({ ...prev, loading: true, error: null, ready: false }))
+      setLoading(true)
 
       fetchYandexSuggest(trimmed, controller.signal)
-        .then((result) => {
+        .then((suggestions) => {
           if (requestId !== requestIdRef.current) return
-          setState({
-            items: result.items,
-            meta: result.meta,
-            loading: false,
-            error: null,
-            ready: true,
-            hiddenCount: result.hiddenCount,
-          })
+          setItems(suggestions)
+          setLoading(false)
         })
         .catch((err: unknown) => {
           if (requestId !== requestIdRef.current) return
-          if (err instanceof DOMException && err.name === 'AbortError') {
-            setState((prev) =>
-              prev.loading ? { ...prev, loading: false } : prev,
-            )
-            return
-          }
-          setState({
-            items: [],
-            loading: false,
-            error: err instanceof Error ? err.message : 'Ошибка запроса',
-            ready: true,
-            hiddenCount: 0,
-          })
+          if (err instanceof DOMException && err.name === 'AbortError') return
+          setItems([])
+          setLoading(false)
         })
     }, debounceMs)
 
@@ -74,7 +35,11 @@ export function useYandexSuggest(query: string, debounceMs = 250) {
       controller.abort()
       requestIdRef.current += 1
     }
-  }, [query, debounceMs])
+  }, [trimmed, debounceMs])
 
-  return state
+  if (!trimmed) {
+    return { items: [], loading: false }
+  }
+
+  return { items, loading }
 }

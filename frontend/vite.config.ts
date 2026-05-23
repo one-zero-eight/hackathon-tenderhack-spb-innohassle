@@ -13,6 +13,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      '/yandex-suggest': {
+        target: 'https://suggest.yandex.ru',
+        changeOrigin: true,
+        rewrite: () => '/suggest-ya.cgi',
+      },
     },
     watch: {
       usePolling: true,

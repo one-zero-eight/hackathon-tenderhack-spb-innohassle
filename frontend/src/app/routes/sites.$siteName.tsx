@@ -1,13 +1,13 @@
 import { Link, Outlet, createFileRoute, useRouterState } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
-import { IoArrowBack, IoGridOutline, IoListOutline, IoSearch, IoStar } from 'react-icons/io5'
+import { IoArrowBack, IoGridOutline, IoListOutline, IoSearch } from 'react-icons/io5'
 import { ProductCard } from '@/components/shared/ProductCard'
 import PriceRangeSlider from '@/components/shared/PriceRangeSlider'
 import { ResultsSkeleton } from '@/components/shared/ResultsSkeleton'
 import SortDropdown from '@/components/shared/SortDropdown'
 import Input from '@/components/ui/Input'
 import { cn } from '@/lib/cn'
-import { formatPrice, formatSiteRating, getSiteBySlug, type Product, type SiteKind } from '@/lib/searchResults'
+import { formatPrice, getSiteBySlug, type Product, type SiteKind, type SiteResult } from '@/lib/searchResults'
 
 type CategorySearch = {
   q?: string
@@ -96,41 +96,6 @@ function CategoryPage() {
   const { q = '' } = Route.useSearch()
   const isProductRoute = useRouterState({ select: (state) => /\/sites\/[^/]+\/[^/]+/.test(state.location.pathname) })
   const site = getSiteBySlug(siteName)
-  const accent = site ? siteAccent[site.kind] : siteAccent.other
-  const [loading, setLoading] = useState(true)
-  const [minPrice, setMinPrice] = useState(0)
-  const [maxPrice, setMaxPrice] = useState(0)
-  const [sort, setSort] = useState<SortValue>('relevant')
-  const [view, setView] = useState<ViewMode>('grid')
-  const [localQuery, setLocalQuery] = useState('')
-  const availableMin = site ? minProductPrice(site.products) : 0
-  const availableMax = site ? maxProductPrice(site.products) : 0
-  const priceFilterActive = minPrice !== availableMin || maxPrice !== availableMax
-
-  useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 600)
-    return () => clearTimeout(timer)
-  }, [siteName, q])
-
-  useEffect(() => {
-    if (!site) return
-    setMinPrice(minProductPrice(site.products))
-    setMaxPrice(maxProductPrice(site.products))
-  }, [site])
-
-  const products = useMemo(() => {
-    if (!site) return []
-    const filtered = filterProducts(site.products, minPrice, maxPrice)
-    const sorted = sortProducts(filtered, sort)
-    const needle = localQuery.trim().toLowerCase()
-    if (!needle) return sorted
-    return sorted.filter((product) => product.name.toLowerCase().includes(needle))
-  }, [site, minPrice, maxPrice, sort, localQuery])
-
-  const resetFilters = () => {
-    setMinPrice(availableMin)
-    setMaxPrice(availableMax)
-  }
 
   if (!site) {
     return (
@@ -144,6 +109,39 @@ function CategoryPage() {
   }
 
   if (isProductRoute) return <Outlet />
+
+  return <CategorySiteView key={siteName} site={site} q={q} />
+}
+
+function CategorySiteView({ site, q }: { site: SiteResult; q: string }) {
+  const accent = siteAccent[site.kind]
+  const availableMin = minProductPrice(site.products)
+  const availableMax = maxProductPrice(site.products)
+  const [loading, setLoading] = useState(true)
+  const [minPrice, setMinPrice] = useState(availableMin)
+  const [maxPrice, setMaxPrice] = useState(availableMax)
+  const [sort, setSort] = useState<SortValue>('relevant')
+  const [view, setView] = useState<ViewMode>('grid')
+  const [localQuery, setLocalQuery] = useState('')
+  const priceFilterActive = minPrice !== availableMin || maxPrice !== availableMax
+
+  useEffect(() => {
+    const timer = setTimeout(() => setLoading(false), 600)
+    return () => clearTimeout(timer)
+  }, [q])
+
+  const products = useMemo(() => {
+    const filtered = filterProducts(site.products, minPrice, maxPrice)
+    const sorted = sortProducts(filtered, sort)
+    const needle = localQuery.trim().toLowerCase()
+    if (!needle) return sorted
+    return sorted.filter((product) => product.name.toLowerCase().includes(needle))
+  }, [site.products, minPrice, maxPrice, sort, localQuery])
+
+  const resetFilters = () => {
+    setMinPrice(availableMin)
+    setMaxPrice(availableMax)
+  }
 
   return (
     <div className="min-h-screen bg-white">

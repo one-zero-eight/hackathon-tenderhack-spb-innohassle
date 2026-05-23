@@ -51,3 +51,26 @@ configs:
             auth_settings:
                 access_token_ttl_minutes: 60
                 refresh_token_ttl_days: 7
+    
+            ozon_settings:
+                headless: 1
+                slow: 0
+                page_load_timeout: 20
+                element_wait_timeout: 8
+                page_load_retries: 1
+                fetch_details: false
+                cookies_file: cookies.json
+                proxy: "NaTLKpP86D:b35iXcQ25L@103.82.103.253:50705"
+                proxies:
+                    - "NaTLKpP86D:b35iXcQ25L@103.82.103.253:50705"
+
+            wildberries_settings:
+                headless: true
+                chrome_executable_path: null
+                page_load_timeout: 25
+                element_wait_timeout: 12
+                page_load_retries: 2
+
+            browser_pool_settings:
+                wildberries_pool_size: 2
+                ozon_pool_size: 2

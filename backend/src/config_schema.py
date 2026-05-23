@@ -85,7 +85,7 @@ class OzonSettings(BaseModel):
 
 
 def _normalize_socks5_proxy_url(raw: str) -> str:
-    """Yandex Market httpx uses SOCKS5 only."""
+    """Yandex Market aiohttp uses SOCKS5 only."""
     value = raw.strip()
     if "://" not in value:
         return f"socks5://{value}"
@@ -126,15 +126,23 @@ class WildberriesSettings(BaseModel):
     headless: bool = True
     "Run Chrome without a visible window"
     chrome_executable_path: str | None = None
-    "Path to Chrome/Chromium executable"
+    "Deprecated: CloakBrowser is used; kept for settings compatibility"
     proxy: str | None = None
     proxies: list[str] = Field(default_factory=list)
+    geoip: bool = True
+    "Resolve geoip for proxy when using CloakBrowser"
+    humanize: bool = False
+    "Human-like delays in CloakBrowser"
     page_load_timeout: int = 20
     "Max seconds to wait for Wildberries page load"
     element_wait_timeout: int = 8
-    "Max seconds to wait for product cards in search results"
+    "Max seconds to wait for challenge / anti-bot on search"
     page_load_retries: int = 1
     "How many times to retry opening search after anti-bot or empty page"
+    search_api: bool = False
+    "Deprecated: use CloakBrowser DOM parsing on search.aspx (kept for settings compatibility)"
+    search_api_raw: bool = False
+    "Deprecated: raw search.wb.ru JSON stream (kept for settings compatibility)"
 
     def resolve_proxy(self) -> str | None:
         raw = self.proxy
@@ -150,15 +158,15 @@ class WildberriesSettings(BaseModel):
 
 class YandexMarketSettings(BaseModel):
     proxy: str | None = None
-    "SOCKS5 proxy for httpx: user:pass@host:port or socks5://user:pass@host:port"
+    "SOCKS5 proxy for aiohttp: user:pass@host:port or socks5://user:pass@host:port"
     proxies: list[str] = Field(default_factory=list)
     "SOCKS5 proxy pool; a random entry is used when proxy is not set"
     timeout: int = 30
-    "httpx request timeout in seconds"
+    "aiohttp request timeout in seconds"
     connect_timeout: int = 6
-    "httpx connect timeout in seconds"
+    "aiohttp connect timeout in seconds"
     request_retries: int = Field(3, ge=1, le=6)
-    "Retries on proxy/connect errors (RemoteProtocolError, timeouts)"
+    "Retries on proxy/connect errors and 5xx responses"
     warmup: bool = True
     "Open market.yandex.ru once per client to obtain cookies before search"
 

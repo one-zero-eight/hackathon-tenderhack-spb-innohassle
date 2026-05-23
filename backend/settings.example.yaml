@@ -24,11 +24,15 @@ ozon_settings:
 
 wildberries_settings:
   headless: true
-  # Docker image sets CHROME_EXECUTABLE_PATH=/usr/bin/chromium
-  chrome_executable_path: null
+  proxy: null
+  proxies: []
+  geoip: true
+  humanize: false
   page_load_timeout: 60
   element_wait_timeout: 45
   page_load_retries: 3
+  search_api: false
+  search_api_raw: false
 
 browser_pool_settings:
   wildberries_pool_size: 2

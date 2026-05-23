@@ -8,7 +8,8 @@ from typing import TypeVar
 from src.api.parsers.ozon.parser import OzonParser
 from src.api.parsers.ozon.run import run_ozon_search
 from src.api.parsers.ozon.stream import iter_ozon_search
-from src.api.parsers.wildberries.parser import WildberriesSeleniumParser
+from src.api.parsers.wildberries.parser import WildberriesParser
+from src.api.parsers.cloak_browser import clear_pool_profiles
 from src.config import browser_pool_settings, ozon_settings, settings_dir, wildberries_settings
 
 logger = logging.getLogger(__name__)
@@ -73,12 +74,6 @@ class _ParserSlotPool[T]:
                     await close(force=True)
                 except Exception as exc:
                     logger.warning("%s slot %d close failed: %s", self._name, index, exc)
-            driver = getattr(parser, "driver", None)
-            if driver:
-                try:
-                    await driver.quit()
-                except Exception as exc:
-                    logger.warning("%s slot %d driver quit failed: %s", self._name, index, exc)
         self._parsers.clear()
         while not self._available.empty():
             self._available.get_nowait()
@@ -86,7 +81,7 @@ class _ParserSlotPool[T]:
 
 
 class BrowserSessionPool:
-    """Browser pool: Wildberries (selenium-driverless) + Ozon (CloakBrowser)."""
+    """Browser pool: Wildberries + Ozon (CloakBrowser)."""
 
     def __init__(self) -> None:
         self._wb = _ParserSlotPool(
@@ -111,7 +106,7 @@ class BrowserSessionPool:
     async def prewarm(self) -> None:
         await asyncio.gather(self._wb.ensure_ready(), self._ozon.ensure_ready())
 
-        async def warmup_wb(parser: WildberriesSeleniumParser) -> None:
+        async def warmup_wb(parser: WildberriesParser) -> None:
             try:
                 await parser.warmup_session()
             except Exception as exc:
@@ -184,6 +179,27 @@ class BrowserSessionPool:
         ):
             yield batch  # type: ignore[misc]
 
+    async def iter_wildberries_search_pages(
+        self,
+        keyword: str,
+        limit: int,
+        *,
+        skip: int = 0,
+        location: str | None = None,
+    ) -> AsyncIterator[dict]:
+        from src.api.parsers.wildberries.stream import iter_wildberries_search_api_raw
+
+        async for page in self._wb.run_stream(
+            lambda parser: iter_wildberries_search_api_raw(
+                parser,
+                keyword,
+                limit,
+                skip=skip,
+                location=location,
+            ),
+        ):
+            yield page  # type: ignore[misc]
+
     async def iter_ozon(
         self,
         query: str,
@@ -228,9 +244,12 @@ class BrowserSessionPool:
         await asyncio.gather(self._wb.shutdown(), self._ozon.shutdown())
         logger.info("Browser session pool stopped")
 
-    async def _create_wb_parser(self) -> WildberriesSeleniumParser:
-        parser = WildberriesSeleniumParser(
+    async def _create_wb_parser(self) -> WildberriesParser:
+        parser = WildberriesParser(
             headless=wildberries_settings.headless,
+            proxy=wildberries_settings.resolve_proxy(),
+            geoip=wildberries_settings.geoip and bool(wildberries_settings.resolve_proxy()),
+            humanize=wildberries_settings.humanize,
             page_load_timeout=wildberries_settings.page_load_timeout,
             element_wait_timeout=wildberries_settings.element_wait_timeout,
             page_load_retries=wildberries_settings.page_load_retries,
@@ -247,7 +266,7 @@ class BrowserSessionPool:
             humanize=ozon_settings.humanize,
             cookies_file=cookies_path,
             proxy=ozon_settings.resolve_proxy(),
-            geoip=bool(ozon_settings.resolve_proxy()),
+            geoip=ozon_settings.geoip and bool(ozon_settings.resolve_proxy()),
             page_load_timeout=ozon_settings.page_load_timeout,
             element_wait_timeout=ozon_settings.element_wait_timeout,
             page_load_retries=ozon_settings.page_load_retries,
@@ -263,6 +282,7 @@ _pool: BrowserSessionPool | None = None
 
 def init_browser_session_pool() -> BrowserSessionPool:
     global _pool  # noqa: PLW0603
+    clear_pool_profiles()
     _pool = BrowserSessionPool()
     logger.info(
         "Browser session pool created (WB=%d, Ozon=%d)",

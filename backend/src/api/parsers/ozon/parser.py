@@ -435,36 +435,34 @@ class OzonParser:
         if not file_ok:
             logger.error(
                 "Ozon antibot at %s (%s): cookies.json missing __Secure-user-id. "
-                "Export cookies from a logged-in browser via the same proxy as ozon_settings.proxy.",
+                "Export cookies from a logged-in browser (Cookie-Editor).",
                 url,
                 block_detail,
             )
         elif not browser_ok:
             logger.error(
                 "Ozon antibot at %s (%s): cookies.json looks valid but __Secure-user-id "
-                "is not in the browser — delete backend/data/cloak-profiles/ozon-* and restart.",
+                "is not in the browser — restart backend (profiles are cleared on startup).",
                 url,
                 block_detail,
             )
         else:
             logger.error(
                 "Ozon antibot at %s (%s): session cookies are loaded but Ozon still blocks. "
-                "Re-export cookies.json from a browser using the same proxy (%s) or set headless: false.",
+                "Re-export cookies.json or set headless: false.",
                 url,
                 block_detail,
-                "see ozon_settings.proxy",
             )
 
     def _antibot_error_message(self) -> str:
         if self._cookies_path and cookies_file_has_session(self._cookies_path):
             return (
                 "Ozon antibot: cookies в файле есть, но сессия не принята. "
-                "Экспортируйте cookies через тот же proxy, что в settings, "
-                "или удалите data/cloak-profiles/ozon-* и перезапустите backend."
+                "Переэкспортируйте cookies.json или перезапустите backend."
             )
         return (
             "Ozon antibot: невалидные cookies (__Secure-user-id). "
-            "Экспортируйте cookies из залогиненного браузера через тот же proxy."
+            "Экспортируйте cookies из залогиненного браузера (Cookie-Editor)."
         )
 
     async def warmup_session(self) -> None:
@@ -715,9 +713,11 @@ class OzonParser:
             added += 1
         return added
 
-    async def _fetch_composer_http(self, path: str) -> object:
+    async def _fetch_composer_http(self, path: str | None) -> object:
         if not self._context:
             raise RuntimeError("CloakBrowser context is not started")
+        if not path:
+            return await evaluate(self._p, FETCH_COMPOSER_JS)
         referer = self._p.url if self._p else OZON_HOME
         headers = {**COMPOSER_HTTP_HEADERS, "referer": referer}
         try:
@@ -782,7 +782,7 @@ class OzonParser:
     ) -> tuple[int, str, object]:
         path = composer_path_with_page(base, page_num)
         if page_num == 1:
-            payload = await self._fetch_composer_http(None)
+            payload = await self._fetch_composer_payload(None)
             if isinstance(payload, dict) and payload.get("__error") is not None:
                 payload = await self._fetch_composer_http(path)
         else:
@@ -1188,8 +1188,7 @@ def _log_cookie_session_hint(cookies_path: Path, count: int, session_ok: bool) -
         return
     logger.warning(
         "Ozon cookies (%s, %d items): __Secure-user-id missing or 0 — "
-        "Ozon will show Antibot Challenge on the first request. "
-        "Export cookies from a logged-in session using the same proxy as in settings.",
+        "Ozon will show Antibot Challenge. Export cookies from a logged-in browser (Cookie-Editor).",
         cookies_path.name,
         count,
     )

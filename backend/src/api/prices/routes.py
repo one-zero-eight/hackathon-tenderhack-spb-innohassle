@@ -153,6 +153,7 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
     async def pump_wildberries() -> None:
         started = time.perf_counter()
         error: str | None = None
+        wb_sse_batch = 0
         try:
             async for batch in iter_wildberries_products(
                 query,
@@ -160,31 +161,53 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
                 payload.skip,
                 location=payload.location,
             ):
-                batch = await _maybe_filter_relevant(payload, query, batch)
-                prices = _products_from_raw(WILDBERRIES_SOURCE, batch)
+                wb_sse_batch += 1
+                filtered = await _maybe_filter_relevant(payload, query, batch)
+                prices = _products_from_raw(WILDBERRIES_SOURCE, filtered)
+                logger.info(
+                    "WB SSE batch %d: %d products to client (parsed=%d)",
+                    wb_sse_batch,
+                    len(prices),
+                    len(batch),
+                )
                 if prices:
                     source_product_counts[WILDBERRIES_SOURCE] += len(prices)
                     await queue.put(
-                        (
-                            "batch",
-                            {"source": WILDBERRIES_SOURCE, "prices": prices},
-                        ),
+                        ("batch", {"source": WILDBERRIES_SOURCE, "prices": prices}),
                     )
-            await queue.put(("source_done", {"source": WILDBERRIES_SOURCE, "error": None}))
+            await queue.put(
+                (
+                    "source_done",
+                    {
+                        "source": WILDBERRIES_SOURCE,
+                        "error": None,
+                        "mode": "cloak_browser_dom",
+                    },
+                ),
+            )
         except Exception as exc:
             error = str(exc)
             logger.exception("Wildberries stream error for %r", query)
             await queue.put(
-                ("source_done", {"source": WILDBERRIES_SOURCE, "error": error}),
+                (
+                    "source_done",
+                    {
+                        "source": WILDBERRIES_SOURCE,
+                        "error": error,
+                        "mode": "cloak_browser_dom",
+                    },
+                ),
             )
         finally:
             elapsed = time.perf_counter() - started
             source_timings[WILDBERRIES_SOURCE] = elapsed
             logger.info(
-                "Price search %s finished in %.2fs (query=%r, products=%d, error=%s)",
+                "Price search %s finished in %.2fs (query=%r, sse_batches=%d, "
+                "products=%d, error=%s)",
                 WILDBERRIES_SOURCE,
                 elapsed,
                 query,
+                wb_sse_batch,
                 source_product_counts[WILDBERRIES_SOURCE],
                 error or "none",
             )

@@ -87,7 +87,7 @@ async def parse_ozon_products_cold(
         humanize=ozon_settings.humanize,
         cookies_file=cookies_path,
         proxy=ozon_settings.resolve_proxy(),
-        geoip=bool(ozon_settings.resolve_proxy()),
+        geoip=ozon_settings.geoip and bool(ozon_settings.resolve_proxy()),
         page_load_timeout=ozon_settings.page_load_timeout,
         element_wait_timeout=ozon_settings.element_wait_timeout,
         page_load_retries=ozon_settings.page_load_retries,

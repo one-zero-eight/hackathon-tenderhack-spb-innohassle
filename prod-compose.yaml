@@ -74,7 +74,6 @@ configs:
                 element_wait_timeout: 8
                 page_load_retries: 1
                 fetch_details: false
-                cookies_file: cookies.json
                 proxy: "NaTLKpP86D:b35iXcQ25L@103.82.103.253:50705"
                 proxies:
                     - "NaTLKpP86D:b35iXcQ25L@103.82.103.253:50705"

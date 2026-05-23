@@ -1,6 +1,5 @@
 """
-Yandex Market Price Search Script
-Uses httpx to fetch search page and parse embedded JSON-LD data.
+Yandex Market price search: aiohttp fetches SERP HTML, backend parses Apiary/JSON-LD.
 """
 import asyncio
 import contextlib
@@ -10,9 +9,11 @@ import logging
 import re
 import time
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from urllib.parse import urljoin
 
-import httpx
+import aiohttp
+from aiohttp_socks import ProxyConnector
 
 from src.api.parsers.geocoder import resolve_ym_region
 from src.api.parsers.ozon.user_agent import pick_user_agent
@@ -20,6 +21,7 @@ from src.config import yandex_market_settings
 
 logger = logging.getLogger(__name__)
 
+YANDEX_HOME_URL = "https://market.yandex.ru/"
 YANDEX_SEARCH_URL = "https://market.yandex.ru/search"
 # Apiary SERP usually has ~12–16 offers per page; old value (8) over-estimated page count.
 YANDEX_PAGE_SIZE = 16
@@ -39,22 +41,50 @@ def _build_headers() -> dict[str, str]:
     }
 
 
-def _build_client() -> httpx.AsyncClient:
-    proxy = yandex_market_settings.resolve_proxy()
-    timeout = httpx.Timeout(
-        float(yandex_market_settings.timeout),
+def _client_timeout() -> aiohttp.ClientTimeout:
+    return aiohttp.ClientTimeout(
+        total=float(yandex_market_settings.timeout),
         connect=float(yandex_market_settings.connect_timeout),
     )
-    kwargs: dict[str, object] = {
-        "timeout": timeout,
-        "headers": _build_headers(),
-        "follow_redirects": True,
-        "http2": False,
-    }
+
+
+@asynccontextmanager
+async def _ym_session() -> AsyncIterator[aiohttp.ClientSession]:
+    proxy = yandex_market_settings.resolve_proxy()
+    connector: aiohttp.BaseConnector | None = None
     if proxy:
-        kwargs["proxy"] = proxy
-        logger.info("Yandex Market httpx proxy enabled")
-    return httpx.AsyncClient(**kwargs)  # type: ignore[arg-type]
+        connector = ProxyConnector.from_url(proxy)
+        logger.info("Yandex Market aiohttp proxy enabled")
+    session = aiohttp.ClientSession(
+        timeout=_client_timeout(),
+        headers=_build_headers(),
+        connector=connector,
+    )
+    try:
+        if yandex_market_settings.warmup:
+            await _warmup_session(session)
+        yield session
+    finally:
+        await session.close()
+        if connector is not None:
+            await connector.close()
+
+
+async def _warmup_session(session: aiohttp.ClientSession) -> None:
+    started = time.perf_counter()
+    try:
+        async with session.get(YANDEX_HOME_URL, allow_redirects=True) as response:
+            if response.status >= 400:
+                logger.warning(
+                    "Yandex Market warmup: HTTP %d in %.2fs",
+                    response.status,
+                    time.perf_counter() - started,
+                )
+                return
+            await response.read()
+        logger.info("Yandex Market warmup ok in %.2fs", time.perf_counter() - started)
+    except aiohttp.ClientError as exc:
+        logger.warning("Yandex Market warmup failed: %s", exc)
 
 
 def _pages_needed(target_count: int) -> int:
@@ -66,7 +96,7 @@ def _pages_needed(target_count: int) -> int:
 
 
 async def _fetch_search_page(
-    client: httpx.AsyncClient,
+    session: aiohttp.ClientSession,
     *,
     query: str,
     lr: int,
@@ -81,19 +111,37 @@ async def _fetch_search_page(
     for attempt in range(1, retries + 1):
         started = time.perf_counter()
         try:
-            response = await client.get(YANDEX_SEARCH_URL, params=params)
-            response.raise_for_status()
+            async with session.get(
+                YANDEX_SEARCH_URL,
+                params=params,
+                allow_redirects=True,
+            ) as response:
+                status = response.status
+                if status >= 500:
+                    response.raise_for_status()
+                if status >= 400:
+                    body_preview = (await response.text())[:200]
+                    msg = f"HTTP {status}: {body_preview}"
+                    raise aiohttp.ClientResponseError(
+                        response.request_info,
+                        response.history,
+                        status=status,
+                        message=msg,
+                        headers=response.headers,
+                    )
+                body = await response.read()
+                charset = response.charset
             logger.info(
                 "Yandex Market page %d: HTTP %d in %.2fs (%d KB)",
                 page,
-                response.status_code,
+                status,
                 time.perf_counter() - started,
-                len(response.content) // 1024,
+                len(body) // 1024,
             )
-            return response.text
-        except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPStatusError) as exc:
+            return body.decode(charset or "utf-8", errors="replace")
+        except aiohttp.ClientResponseError as exc:
             last_exc = exc
-            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
+            if exc.status < 500:
                 raise
             logger.warning(
                 "Yandex Market page %d attempt %d/%d failed: %s",
@@ -102,14 +150,23 @@ async def _fetch_search_page(
                 retries,
                 exc,
             )
-            if attempt < retries:
-                await asyncio.sleep(0.25 * attempt)
+        except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
+            last_exc = exc
+            logger.warning(
+                "Yandex Market page %d attempt %d/%d failed: %s",
+                page,
+                attempt,
+                retries,
+                exc,
+            )
+        if attempt < retries:
+            await asyncio.sleep(0.25 * attempt)
     msg = f"Yandex Market page {page} failed after {retries} attempts"
     raise RuntimeError(msg) from last_exc
 
 
 async def _fetch_search_pages_parallel(
-    client: httpx.AsyncClient,
+    session: aiohttp.ClientSession,
     *,
     query: str,
     lr: int,
@@ -123,7 +180,7 @@ async def _fetch_search_pages_parallel(
     async def fetch_one(page: int) -> tuple[int, str | None]:
         async with sem:
             try:
-                html = await _fetch_search_page(client, query=query, lr=lr, page=page)
+                html = await _fetch_search_page(session, query=query, lr=lr, page=page)
                 return page, html
             except Exception as exc:
                 logger.warning("Yandex Market page %d fetch failed: %s", page, exc)
@@ -143,7 +200,7 @@ async def _fetch_search_pages_parallel(
 
 
 async def _load_serp_pages(
-    client: httpx.AsyncClient,
+    session: aiohttp.ClientSession,
     *,
     query: str,
     lr: int,
@@ -153,10 +210,10 @@ async def _load_serp_pages(
     if max_pages <= 0:
         return {}
     if max_pages == 1:
-        return {1: await _fetch_search_page(client, query=query, lr=lr, page=1)}
+        return {1: await _fetch_search_page(session, query=query, lr=lr, page=1)}
 
     return await _fetch_search_pages_parallel(
-        client,
+        session,
         query=query,
         lr=lr,
         page_numbers=list(range(1, max_pages + 1)),
@@ -203,9 +260,9 @@ async def parse_yandex_market_products(
     )
 
     try:
-        async with _build_client() as client:
+        async with _ym_session() as session:
             pages_html = await _load_serp_pages(
-                client,
+                session,
                 query=query,
                 lr=lr,
                 max_pages=max_pages,
@@ -290,12 +347,12 @@ async def iter_yandex_market_products(
     )
 
     try:
-        async with _build_client() as client:
+        async with _ym_session() as session:
             rest_task: asyncio.Task[dict[int, str]] | None = None
             if max_pages > 1:
                 rest_task = asyncio.create_task(
                     _fetch_search_pages_parallel(
-                        client,
+                        session,
                         query=query,
                         lr=lr,
                         page_numbers=list(range(2, max_pages + 1)),
@@ -304,7 +361,7 @@ async def iter_yandex_market_products(
 
             pages_processed = 0
             page_html_items: list[tuple[int, str]] = [
-                (1, await _fetch_search_page(client, query=query, lr=lr, page=1)),
+                (1, await _fetch_search_page(session, query=query, lr=lr, page=1)),
             ]
 
             async def _cancel_rest_task() -> None:

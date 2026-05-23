@@ -58,7 +58,13 @@ function mapProduct(item: ProductPrice, slug: string, index: number): Product {
   }
 }
 
-function mapMarketplaceResult(result: MarketplacePriceResult): SiteResult | null {
+export type PriceSearchData = {
+  sites: SiteResult[]
+  fixedQuery: string | null
+  effectiveQuery: string
+}
+
+export function mapMarketplaceResult(result: MarketplacePriceResult): SiteResult | null {
   const meta = SOURCE_META[result.source] ?? {
     slug: slugifySource(result.source),
     name: result.source,
@@ -72,6 +78,7 @@ function mapMarketplaceResult(result: MarketplacePriceResult): SiteResult | null
     logo: meta.logo,
     products: result.prices.map((price, index) => mapProduct(price, meta.slug, index)),
     error: result.error,
+    sourceComplete: result.complete ?? false,
   }
 }
 

@@ -11,6 +11,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useCity } from '@/hooks/useCity'
 import { findSiteInPriceSearchCache, usePriceSearch } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
+import { getPopularCities } from '@/lib/geo'
 import { formatPrice, type Product, type SiteKind, type SiteResult } from '@/lib/searchResults'
 
 type CategorySearch = {
@@ -49,6 +50,7 @@ const siteAccent: Record<
     sliderTrack: string
     sliderFill: string
     sliderThumb: string
+    resetButton: string
   }
 > = {
   ozon: {
@@ -61,6 +63,7 @@ const siteAccent: Record<
     sliderTrack: 'bg-blue-100',
     sliderFill: 'bg-blue-600',
     sliderThumb: '[&::-moz-range-thumb]:border-blue-600 [&::-webkit-slider-thumb]:border-blue-600',
+    resetButton: 'bg-blue-500 text-white hover:bg-blue-600',
   },
   wildberries: {
     link: 'text-fuchsia-600 hover:text-fuchsia-700',
@@ -72,6 +75,7 @@ const siteAccent: Record<
     sliderTrack: 'bg-fuchsia-100',
     sliderFill: 'bg-fuchsia-600',
     sliderThumb: '[&::-moz-range-thumb]:border-fuchsia-600 [&::-webkit-slider-thumb]:border-fuchsia-600',
+    resetButton: 'bg-fuchsia-500 text-white hover:bg-fuchsia-600',
   },
   yandex: {
     link: 'text-yellow-700 hover:text-yellow-800',
@@ -83,6 +87,7 @@ const siteAccent: Record<
     sliderTrack: 'bg-yellow-100',
     sliderFill: 'bg-yellow-500',
     sliderThumb: '[&::-moz-range-thumb]:border-yellow-500 [&::-webkit-slider-thumb]:border-yellow-500',
+    resetButton: 'bg-yellow-500 text-white hover:bg-yellow-600',
   },
   other: {
     link: 'text-main-blue hover:underline',
@@ -94,6 +99,7 @@ const siteAccent: Record<
     sliderTrack: 'bg-pale-blue',
     sliderFill: 'bg-main-blue',
     sliderThumb: '[&::-moz-range-thumb]:border-main-blue [&::-webkit-slider-thumb]:border-main-blue',
+    resetButton: 'border-gray-blue bg-pale-blue text-main-blue hover:bg-gray-blue/30 active:bg-gray-blue/45',
   },
 }
 
@@ -104,9 +110,9 @@ function CategoryPage() {
   const isProductRoute = useRouterState({ select: (state) => /\/sites\/[^/]+\/[^/]+/.test(state.location.pathname) })
 
   useEffect(() => {
-    if (locationParam && locationParam !== city.label) {
-      setCity({ id: 0, value: locationParam, label: locationParam })
-    }
+    if (!locationParam || city.label === locationParam) return
+    const fromPopular = getPopularCities().find((item) => item.label === locationParam)
+    setCity(fromPopular ?? { id: 0, value: locationParam, label: locationParam })
   }, [locationParam, city.label, setCity])
 
   const location = city.label
@@ -197,16 +203,7 @@ function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; 
 
       <div className="mx-auto grid max-w-7xl lg:grid-cols-[248px_1fr]">
         <aside className="border-gray-blue/60 border-b bg-white p-4 sm:p-5 lg:sticky lg:top-0 lg:h-[calc(100vh-57px)] lg:overflow-y-auto lg:border-r lg:border-b-0">
-          <div className="mb-5 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-bold tracking-wide text-black">ФИЛЬТРЫ</h2>
-            {priceFilterActive && (
-              <button type="button" onClick={resetFilters} className={cn('cursor-pointer text-sm', accent.link)}>
-                Сбросить все
-              </button>
-            )}
-          </div>
-
-          <div className="border-gray-blue/40 space-y-3 border-t pt-4">
+          <div className="space-y-3 pt-4">
             <p className="font-medium text-black">Цена, ₽</p>
             <PriceRangeSlider
               min={availableMin}
@@ -225,6 +222,11 @@ function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; 
               {'Диапозон: '}
               {formatPrice(availableMin)} – {formatPrice(availableMax)}
             </p>
+            {priceFilterActive && (
+              <button type="button" onClick={resetFilters} className={cn('mt-2 w-full cursor-pointer rounded-xl px-4 py-2.5 text-sm font-medium transition-colors', accent.resetButton)}>
+                Сбросить все
+              </button>
+            )}
           </div>
         </aside>
 

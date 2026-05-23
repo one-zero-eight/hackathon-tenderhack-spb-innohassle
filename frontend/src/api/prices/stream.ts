@@ -1,6 +1,6 @@
 import { isPriceStreamEvent, type PriceStreamEvent } from './events'
 import type { PriceSearchStreamState } from './state'
-import { applyPriceSearchEvent, clonePriceSearchState, emptyPriceSearchResponse } from './state'
+import { applyPriceSearchEvent, emptyPriceSearchResponse } from './state'
 
 export const PRICES_API_BASE = import.meta.env.VITE_API_URL ?? '/api'
 
@@ -58,19 +58,19 @@ async function readNdjsonStream(response: Response, handlers: PriceSearchHandler
 
       state = applyPriceSearchEvent(state, parsed)
       handlers.onEvent?.(parsed)
-      handlers.onState?.(clonePriceSearchState(state))
+      handlers.onState?.(state)
 
       if (parsed.type === 'meta') handlers.onMeta?.(parsed)
       if (parsed.type === 'batch') handlers.onBatch?.(parsed)
       if (parsed.type === 'source_done') handlers.onSourceDone?.(parsed)
       if (parsed.type === 'done') {
-        handlers.onDone?.(clonePriceSearchState(state))
+        handlers.onDone?.(state)
         return state
       }
     }
   }
 
-  handlers.onDone?.(clonePriceSearchState(state))
+  handlers.onDone?.(state)
   return state
 }
 

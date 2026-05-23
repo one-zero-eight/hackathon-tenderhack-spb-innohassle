@@ -13,13 +13,7 @@ export const Route = createFileRoute('/')({
   component: HomePage,
 })
 
-const QUICK_SEARCHES = ['sasung26', 'шины', 'дктрский халатт', 'iphone 15', 'наушники', 'кофемашина'] as const
-
-const MARKETPLACES = [
-  { name: 'Ozon', className: 'border-blue-200 bg-blue-50 text-blue-600' },
-  { name: 'Wildberries', className: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-600' },
-  { name: 'Yandex Market', className: 'border-yellow-200 bg-yellow-50 text-yellow-700' },
-] as const
+const QUICK_SEARCHES = ['samsung s26', 'шины', 'докторский халат', 'iphone 15', 'наушники', 'детский плащ'] as const
 
 function HomePage() {
   const [query, setQuery] = useState('')
@@ -51,7 +45,7 @@ function HomePage() {
   }
 
   return (
-    <div className="from-pale-blue relative min-h-screen overflow-hidden bg-linear-to-b via-white to-white">
+    <div className="from-pale-blue relative min-h-screen overflow-hidden via-white to-white">
       <div aria-hidden className="bg-main-blue/10 pointer-events-none absolute -top-24 left-1/2 h-72 w-xl -translate-x-1/2 rounded-full blur-3xl" />
       <div aria-hidden className="bg-orange/10 pointer-events-none absolute top-40 -right-20 h-56 w-56 rounded-full blur-3xl" />
 
@@ -60,24 +54,8 @@ function HomePage() {
       </div>
 
       <main className="relative flex min-h-screen flex-col items-center justify-start px-4 pt-[18vh] pb-24 sm:pt-[22vh]">
-        <div className="mb-10 max-w-3xl text-center">
-          <p className="text-main-blue mb-3 text-sm font-semibold tracking-wide uppercase">Сравнение цен</p>
-          <h1 className="text-4xl font-bold tracking-tight text-balance text-black sm:text-5xl">
-            Найдите лучшую цену
-            <span className="text-main-blue"> на маркетплейсах</span>
-          </h1>
-          <p className="text-gray mx-auto mt-4 max-w-xl text-base leading-relaxed sm:text-lg">Ozon, Wildberries, Yandex Market и другие источники — в одном поиске с исправлением опечаток</p>
-        </div>
-
-        <div className="mb-8 flex flex-wrap items-center justify-center gap-2">
-          {MARKETPLACES.map(({ name, className }) => (
-            <span key={name} className={cn('rounded-full border px-3.5 py-1.5 text-sm font-medium', className)}>
-              {name}
-            </span>
-          ))}
-        </div>
-
         <div className="w-full max-w-3xl">
+          <h1 className="mb-10 text-center text-4xl font-bold tracking-tight text-black sm:text-3xl">Найдите лучшую цену на маркетплейсах</h1>
           <div ref={searchRef} className={cn('relative z-50 w-full', showSuggestions ? 'border-gray-blue/60 overflow-hidden rounded-2xl border bg-white' : 'rounded-full')}>
             <form onSubmit={onSearch} className={cn('flex w-full items-stretch', showSuggestions ? 'border-gray-blue/60 border-b' : undefined)}>
               <Input

@@ -19,6 +19,7 @@ export type SiteResult = {
   rating?: number
   reviewsLabel?: string
   error?: string | null
+  sourceComplete?: boolean
 }
 
 export const MARKETPLACE_LOGOS = {

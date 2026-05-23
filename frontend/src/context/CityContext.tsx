@@ -1,6 +1,6 @@
 import { CityContext } from '@/context/city-context'
 import { detectCity, getDefaultCity, getPopularCities, type CityOption } from '@/lib/geo'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 const STORAGE_KEY = 'selected-city-label'
 
@@ -14,6 +14,10 @@ function readStoredCity(): CityOption | null {
   }
 }
 
+function sameCity(a: CityOption, b: CityOption): boolean {
+  return a.label === b.label && a.value === b.value && a.id === b.id
+}
+
 export function CityProvider({ children }: { children: ReactNode }) {
   const [city, setCityState] = useState<CityOption>(() => readStoredCity() ?? getDefaultCity())
 
@@ -21,7 +25,7 @@ export function CityProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     detectCity().then((found) => {
       if (!cancelled && found && !localStorage.getItem(STORAGE_KEY)) {
-        setCityState(found)
+        setCityState((prev) => (sameCity(prev, found) ? prev : found))
       }
     })
     return () => {
@@ -29,14 +33,19 @@ export function CityProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const setCity = (next: CityOption) => {
-    setCityState(next)
-    try {
-      localStorage.setItem(STORAGE_KEY, next.label)
-    } catch {
-      /* ignore */
-    }
-  }
+  const setCity = useCallback((next: CityOption) => {
+    setCityState((prev) => {
+      if (sameCity(prev, next)) return prev
+      try {
+        localStorage.setItem(STORAGE_KEY, next.label)
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }, [])
 
-  return <CityContext.Provider value={{ city, setCity }}>{children}</CityContext.Provider>
+  const value = useMemo(() => ({ city, setCity }), [city, setCity])
+
+  return <CityContext.Provider value={value}>{children}</CityContext.Provider>
 }

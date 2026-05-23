@@ -44,10 +44,11 @@ export default function PriceRangeSlider({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       <div className="grid grid-cols-2 gap-3">
         <Input
-          size="sm"
+          size="md"
+          className="rounded-lg"
           inputMode="numeric"
           placeholder="От"
           value={String(valueMin)}
@@ -57,7 +58,8 @@ export default function PriceRangeSlider({
           }}
         />
         <Input
-          size="sm"
+          size="md"
+          className="rounded-lg"
           inputMode="numeric"
           placeholder="До"
           value={String(valueMax)}
@@ -67,7 +69,6 @@ export default function PriceRangeSlider({
           }}
         />
       </div>
-
       <div className="relative h-8">
         <div className={cn('absolute top-1/2 right-0 left-0 h-1 -translate-y-1/2 rounded-full', trackClassName)} />
         <div className={cn('absolute top-1/2 h-1 -translate-y-1/2 rounded-full', fillClassName)} style={{ left: `${left}%`, right: `${right}%` }} />

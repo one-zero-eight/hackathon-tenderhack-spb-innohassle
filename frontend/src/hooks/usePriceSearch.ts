@@ -1,11 +1,14 @@
 import { emptyPriceSearchResponse, streamPriceSearch, type PriceSearchStreamState } from '@/api/prices'
-import { mapPriceSearchResponse } from '@/lib/mapSearchResults'
+import { type PriceSearchData } from '@/lib/mapSearchResults'
+import { createPriceSearchMapper } from '@/lib/priceSearchMapper'
 import type { SiteResult } from '@/lib/searchResults'
 import { useQuery, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
 export const PRICE_SEARCH_LIMIT = 100
 export const PRICE_SEARCH_STALE_MS = 5 * 60 * 1000
+const STREAM_UI_THROTTLE_MS = 250
+const COMPLETED_STREAMS_MAX = 32
 
 export type PriceSearchParams = {
   query: string
@@ -15,24 +18,7 @@ export type PriceSearchParams = {
   bypassSpellchecker?: boolean
 }
 
-export type PriceSearchData = {
-  sites: SiteResult[]
-  fixedQuery: string | null
-  effectiveQuery: string
-}
-
-export function priceSearchQueryKey({ query, location, limit = PRICE_SEARCH_LIMIT, skip = 0, bypassSpellchecker = false }: PriceSearchParams) {
-  return ['price-search', query.trim(), location ?? '', limit, skip, bypassSpellchecker] as const
-}
-
-function mapPriceSearchData(data: PriceSearchStreamState): PriceSearchData {
-  const fixedQuery = data.fixed_query?.trim() || null
-  return {
-    sites: mapPriceSearchResponse(data),
-    fixedQuery,
-    effectiveQuery: fixedQuery ?? data.query,
-  }
-}
+export type { PriceSearchData }
 
 function queryKeyId(queryKey: QueryKey): string {
   return JSON.stringify(queryKey)
@@ -42,10 +28,56 @@ type StreamEntry = {
   controller: AbortController
   promise: Promise<PriceSearchStreamState>
   refs: number
+  throttler: QueryDataThrottler
 }
 
 const activeStreams = new Map<string, StreamEntry>()
 const completedStreams = new Set<string>()
+
+type QueryDataThrottler = {
+  push: (data: PriceSearchData) => void
+  flush: (data: PriceSearchData) => void
+  cancel: () => void
+}
+
+function createQueryDataThrottler(queryClient: QueryClient, queryKey: QueryKey): QueryDataThrottler {
+  let pending: PriceSearchData | null = null
+  let timer: ReturnType<typeof setTimeout> | null = null
+
+  const flushPending = () => {
+    timer = null
+    if (pending) {
+      queryClient.setQueryData(queryKey, pending)
+      pending = null
+    }
+  }
+
+  return {
+    push(data) {
+      pending = data
+      if (!timer) timer = setTimeout(flushPending, STREAM_UI_THROTTLE_MS)
+    },
+    flush(data) {
+      if (timer) clearTimeout(timer)
+      timer = null
+      pending = null
+      queryClient.setQueryData(queryKey, data)
+    },
+    cancel() {
+      if (timer) clearTimeout(timer)
+      timer = null
+      pending = null
+    },
+  }
+}
+
+function markStreamCompleted(key: string) {
+  completedStreams.add(key)
+  if (completedStreams.size > COMPLETED_STREAMS_MAX) {
+    const oldest = completedStreams.values().next().value
+    if (oldest) completedStreams.delete(oldest)
+  }
+}
 
 function acquirePriceSearchStream(params: PriceSearchParams, queryClient: QueryClient): { promise: Promise<PriceSearchStreamState>; release: () => void } {
   const queryKey = priceSearchQueryKey(params)
@@ -60,6 +92,7 @@ function acquirePriceSearchStream(params: PriceSearchParams, queryClient: QueryC
       release: () => {
         existing.refs -= 1
         if (existing.refs <= 0) {
+          existing.throttler.cancel()
           existing.controller.abort()
           activeStreams.delete(key)
         }
@@ -68,38 +101,43 @@ function acquirePriceSearchStream(params: PriceSearchParams, queryClient: QueryC
   }
 
   const controller = new AbortController()
+  const throttler = createQueryDataThrottler(queryClient, queryKey)
+  const mapper = createPriceSearchMapper()
   const initialState = emptyPriceSearchResponse(params.query.trim())
-  queryClient.setQueryData(queryKey, initialState)
+  throttler.flush(mapper.update(initialState))
 
   const promise = streamPriceSearch(
     params,
     {
       onState: (state) => {
-        queryClient.setQueryData(queryKey, state)
+        throttler.push(mapper.update(state))
       },
     },
     controller.signal,
   )
     .then((final) => {
-      completedStreams.add(key)
+      throttler.flush(mapper.update(final))
+      markStreamCompleted(key)
       return final
     })
     .finally(() => {
-    const entry = activeStreams.get(key)
-    if (entry?.controller === controller) {
-      activeStreams.delete(key)
-    }
-  })
+      const entry = activeStreams.get(key)
+      if (entry?.controller === controller) {
+        entry.throttler.cancel()
+        activeStreams.delete(key)
+      }
+    })
 
-  activeStreams.set(key, { controller, promise, refs: 1 })
+  activeStreams.set(key, { controller, promise, refs: 1, throttler })
 
   return {
-    promise: promise,
+    promise,
     release: () => {
       const entry = activeStreams.get(key)
       if (!entry) return
       entry.refs -= 1
       if (entry.refs <= 0) {
+        entry.throttler.cancel()
         entry.controller.abort()
         activeStreams.delete(key)
       }
@@ -107,15 +145,18 @@ function acquirePriceSearchStream(params: PriceSearchParams, queryClient: QueryC
   }
 }
 
+export function priceSearchQueryKey({ query, location, limit = PRICE_SEARCH_LIMIT, skip = 0, bypassSpellchecker = false }: PriceSearchParams) {
+  return ['price-search', query.trim(), location ?? '', limit, skip, bypassSpellchecker] as const
+}
+
 export function findSiteInPriceSearchCache(queryClient: QueryClient, siteSlug: string, location?: string | null): SiteResult | undefined {
   const normalizedLocation = location ?? ''
-  const entries = queryClient.getQueriesData<PriceSearchStreamState>({ queryKey: ['price-search'] })
+  const entries = queryClient.getQueriesData<PriceSearchData>({ queryKey: ['price-search'] })
 
   for (const [queryKey, data] of entries) {
     if (!data) continue
     if (queryKey[2] !== normalizedLocation) continue
-    const site = mapPriceSearchData(data).sites.find((item) => item.slug === siteSlug)
-    if (site) return site
+    return data.sites.find((item) => item.slug === siteSlug)
   }
 
   return undefined
@@ -136,7 +177,7 @@ export async function fetchPriceSearch(params: PriceSearchParams, signal?: Abort
 function isFreshPriceSearchCache(queryClient: QueryClient, queryKey: ReturnType<typeof priceSearchQueryKey>): boolean {
   const key = queryKeyId(queryKey)
   if (!completedStreams.has(key)) return false
-  const data = queryClient.getQueryData<PriceSearchStreamState>(queryKey)
+  const data = queryClient.getQueryData<PriceSearchData>(queryKey)
   const updatedAt = queryClient.getQueryState(queryKey)?.dataUpdatedAt ?? 0
   return Boolean(data) && Date.now() - updatedAt < PRICE_SEARCH_STALE_MS
 }
@@ -157,9 +198,7 @@ export function usePriceSearch(params: PriceSearchParams, enabled = true) {
     const streamParams: PriceSearchParams = { query: trimmed, location, limit, skip, bypassSpellchecker }
     const streamQueryKey = priceSearchQueryKey(streamParams)
 
-    if (!active) {
-      return
-    }
+    if (!active) return
 
     if (isFreshPriceSearchCache(queryClient, streamQueryKey)) {
       return
@@ -197,12 +236,12 @@ export function usePriceSearch(params: PriceSearchParams, enabled = true) {
     queryFn: () => Promise.reject(new Error('Price search stream is managed manually')),
     enabled: false,
     staleTime: PRICE_SEARCH_STALE_MS,
-    select: mapPriceSearchData,
+    gcTime: PRICE_SEARCH_STALE_MS,
   })
 
   return {
     ...query,
-    data: query.data,
+    data: query.data as PriceSearchData | undefined,
     isLoading: active && streaming,
     isFetching: active && streaming,
     isError: error != null,
@@ -215,9 +254,9 @@ export function useSiteFromSearch(siteSlug: string, params: PriceSearchParams): 
   const trimmed = params.query.trim()
   if (!trimmed) return findSiteInPriceSearchCache(queryClient, siteSlug, params.location)
 
-  const data = queryClient.getQueryData<PriceSearchStreamState>(priceSearchQueryKey(params))
+  const data = queryClient.getQueryData<PriceSearchData>(priceSearchQueryKey(params))
   if (data) {
-    return mapPriceSearchData(data).sites.find((site) => site.slug === siteSlug)
+    return data.sites.find((site) => site.slug === siteSlug)
   }
 
   return findSiteInPriceSearchCache(queryClient, siteSlug, params.location)
@@ -225,9 +264,9 @@ export function useSiteFromSearch(siteSlug: string, params: PriceSearchParams): 
 
 export function useProductFromSearch(siteSlug: string, productId: string, params: PriceSearchParams) {
   const queryClient = useQueryClient()
-  const site = useSiteFromSearch(siteSlug, params)
   const cached = findProductInPriceSearchCache(queryClient, siteSlug, productId, params.location)
   if (cached) return cached
+  const site = useSiteFromSearch(siteSlug, params)
   if (!site) return null
   const product = site.products.find((item) => item.id === productId)
   if (!product) return null

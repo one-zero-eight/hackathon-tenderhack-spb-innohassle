@@ -6,15 +6,10 @@ import { IoLocationSharp, IoSearch } from 'react-icons/io5'
 
 type Props = {
   className?: string
+  onCityChange?: (city: CityOption) => void
 }
 
-function CityMenuHeader({ search, remoteQuery }: { search: string; remoteQuery: string }) {
-  const trimmed = search.trim()
-
-  if (!trimmed) {
-    return <p className="text-gray px-4 pt-2.5 pb-0.5 text-[11px] font-medium tracking-wide uppercase">Популярные города</p>
-  }
-
+function CityMenuHeader({ remoteQuery }: { remoteQuery: string }) {
   if (remoteQuery) {
     return <p className="text-gray px-4 pt-2.5 pb-0.5 text-[11px] font-medium tracking-wide uppercase">Результаты поиска</p>
   }
@@ -22,7 +17,7 @@ function CityMenuHeader({ search, remoteQuery }: { search: string; remoteQuery: 
   return <p className="text-gray px-4 pt-2.5 pb-0.5 text-[11px] font-medium tracking-wide uppercase">Совпадения</p>
 }
 
-export default function CitySelect({ className }: Props) {
+export default function CitySelect({ className, onCityChange }: Props) {
   const { city, setCity } = useCity()
   const popularCities = useMemo(() => getPopularCities(), [])
   const [search, setSearch] = useState('')
@@ -65,7 +60,7 @@ export default function CitySelect({ className }: Props) {
       searchSize="md"
       searchPlaceholder="Поиск города"
       menuClassName="w-80 min-w-80"
-      menuHeader={<CityMenuHeader search={search} remoteQuery={remoteQuery} />}
+      menuHeader={<CityMenuHeader remoteQuery={remoteQuery} />}
       searchLeadingIcon={<IoSearch size={16} />}
       searchValue={search}
       onSearchChange={setSearch}
@@ -75,6 +70,7 @@ export default function CitySelect({ className }: Props) {
         const picked = [...options, ...popularCities, city].find((o) => o.value === value)
         if (picked) {
           setCity(picked)
+          onCityChange?.(picked)
           setSearch('')
         }
       }}

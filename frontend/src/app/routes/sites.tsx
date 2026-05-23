@@ -8,13 +8,14 @@ import Input from '@/components/ui/Input'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useCity } from '@/hooks/useCity'
 import { useYandexSearchExtended } from '@/hooks/useYandexSearchExtended'
-import { usePriceSearch } from '@/hooks/usePriceSearch'
+import { usePriceSearch, PRICE_SEARCH_LIMIT } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
 import { splitSiteResults } from '@/lib/mapSearchResults'
+import { getPopularCities } from '@/lib/geo'
 import { getQueryCorrection } from '@/lib/queryCorrection'
 import { formatPrice, formatSiteRating, type SiteResult } from '@/lib/searchResults'
 import { useVisibleProductCount } from '@/lib/useVisibleProductCount'
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 
 type SitesSearch = {
   q?: string
@@ -60,9 +61,9 @@ function SitesPage() {
   }, [q])
 
   useEffect(() => {
-    if (locationParam && locationParam !== city.label) {
-      setCity({ id: 0, value: locationParam, label: locationParam })
-    }
+    if (!locationParam || city.label === locationParam) return
+    const fromPopular = getPopularCities().find((item) => item.label === locationParam)
+    setCity(fromPopular ?? { id: 0, value: locationParam, label: locationParam })
   }, [locationParam, city.label, setCity])
 
   useEffect(() => {
@@ -91,7 +92,18 @@ function SitesPage() {
           <Link to="/" className="flex items-center gap-2 hover:underline">
             <IoArrowBack size={20} /> Назад
           </Link>
-          <CitySelect className="w-44 sm:w-52" />
+          <div className="relative z-10">
+            <CitySelect
+              className="rounded-xl bg-white/80 backdrop-blur-sm"
+              onCityChange={(picked) => {
+                void navigate({
+                  to: '/sites',
+                  search: { q, strict: strict || undefined, location: picked.label },
+                  replace: true,
+                })
+              }}
+            />
+          </div>
         </div>
         <form onSubmit={submitSearch} className="flex w-full flex-col rounded-full sm:flex-row sm:items-stretch">
           <Input size="md" variant="fill" value={query} onChange={(e) => setQuery(e.target.value)} leadingIcon={<IoSearch size={20} />} className="flex flex-1 rounded-l-full border-r-0" />
@@ -138,7 +150,7 @@ function SitesPage() {
           ) : (
             <>
               {mainSiteResults.map((site) => (
-                <SiteSection key={site.slug} site={site} query={effectiveQuery} location={location} />
+                <SiteSection key={site.slug} site={site} query={effectiveQuery} location={location} pricesLoading={isLoading} productLimit={PRICE_SEARCH_LIMIT} />
               ))}
               {showMarketplaceStreaming && (
                 <div className="text-gray flex items-center justify-center gap-2 py-2 text-sm">
@@ -167,7 +179,7 @@ function SitesPage() {
               {otherError && otherSiteResults.length === 0 && <p className="text-gray py-4 text-center text-sm">{otherError instanceof Error ? otherError.message : 'Не удалось загрузить другие источники'}</p>}
 
               {otherSiteResults.map((site) => (
-                <SiteSection key={site.slug} site={site} query={effectiveQuery} location={location} external />
+                <SiteSection key={site.slug} site={site} query={effectiveQuery} location={location} external pricesLoading={otherLoading} />
               ))}
 
               {otherLoading && otherSiteResults.length > 0 && (
@@ -219,22 +231,49 @@ function SiteTitle({ site, className }: { site: SiteResult; className?: string }
   return <h2 className="text-xl font-semibold">{site.name}</h2>
 }
 
-function SitePriceStat({ label, value, className }: { label?: string; value?: number; className?: string }) {
+function SitePriceStat({ label, value, loading = false, className }: { label?: string; value?: number | null; loading?: boolean; className?: string }) {
   return (
     <div className={cn('shrink-0 rounded-2xl bg-white px-3.5 py-2 text-center', className)}>
       {label && <p className="text-gray text-[11px] font-medium tracking-wide uppercase">{label}</p>}
-      {value && <p className="mt-0.5 text-base leading-tight font-semibold text-nowrap text-black tabular-nums">{formatPrice(value)}</p>}
+      {loading ? (
+        <div className="mt-1 flex justify-center">
+          <LoadingSpinner size="sm" className="text-gray" />
+        </div>
+      ) : value != null ? (
+        <p className="mt-0.5 text-base leading-tight font-semibold text-nowrap text-black tabular-nums">{formatPrice(value)}</p>
+      ) : null}
     </div>
   )
 }
 
-function SiteSection({ site, query, location, external = false }: { site: SiteResult; query: string; location: string; external?: boolean }) {
+function siteSectionPropsEqual(
+  prev: { site: SiteResult; query: string; location: string; external?: boolean; pricesLoading?: boolean; productLimit?: number },
+  next: { site: SiteResult; query: string; location: string; external?: boolean; pricesLoading?: boolean; productLimit?: number },
+) {
+  return (
+    prev.site.slug === next.site.slug &&
+    prev.site.products.length === next.site.products.length &&
+    prev.site.sourceComplete === next.site.sourceComplete &&
+    prev.site.rating === next.site.rating &&
+    prev.site.reviewsLabel === next.site.reviewsLabel &&
+    prev.site.error === next.site.error &&
+    prev.pricesLoading === next.pricesLoading &&
+    prev.productLimit === next.productLimit &&
+    prev.query === next.query &&
+    prev.location === next.location &&
+    prev.external === next.external
+  )
+}
+
+const SiteSection = memo(function SiteSection({ site, query, location, external = false, pricesLoading = false, productLimit }: { site: SiteResult; query: string; location: string; external?: boolean; pricesLoading?: boolean; productLimit?: number }) {
   const visibleCount = useVisibleProductCount()
   const products = site.products.slice(0, visibleCount)
   const pricedProducts = site.products.filter((product) => product.price > 0)
   const prices = pricedProducts.map((product) => product.price)
   const medianProductPrice = medianPrice(prices)
   const averageProductPrice = prices.length > 0 ? Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length) : null
+  const statsLoading = pricesLoading && (productLimit == null ? true : site.products.length < productLimit && !site.sourceComplete)
+  const showPriceStats = statsLoading || pricedProducts.length > 1
 
   if (site.error && site.products.length === 0) {
     return (
@@ -268,11 +307,10 @@ function SiteSection({ site, query, location, external = false }: { site: SiteRe
           )}
           <p className="mt-1 text-sm opacity-80">{site.products.length} товаров найдено</p>
         </div>
-        {pricedProducts.length > 1 && (
+        {showPriceStats && (
           <>
-            {averageProductPrice != null && <SitePriceStat label="Средняя" value={averageProductPrice} className="col-span-1" />}
-            {medianProductPrice != null && <SitePriceStat label="Медиана" value={medianProductPrice} className="col-span-1" />}
-            {/* {medianProductPrice != null && <SitePriceStat className="col-span-1 " />} */}
+            <SitePriceStat label="Средняя" value={averageProductPrice} loading={statsLoading} className="col-span-1" />
+            <SitePriceStat label="Медиана" value={medianProductPrice} loading={statsLoading} className="col-span-1" />
           </>
         )}
       </div>
@@ -284,4 +322,4 @@ function SiteSection({ site, query, location, external = false }: { site: SiteRe
       </div>
     </section>
   )
-}
+}, siteSectionPropsEqual)

@@ -10,8 +10,8 @@ from env import Config
 from query_rewrite import rewrite_query
 
 _MAX_PRODUCTS_PER_PAGE = 5
-HTTP_SEMAPHORE = asyncio.Semaphore(5)
-LLM_SEMAPHORE = asyncio.Semaphore(1)
+HTTP_SEMAPHORE = asyncio.Semaphore(10)
+LLM_SEMAPHORE = asyncio.Semaphore(8)
 
 _REMOVE_TAGS = frozenset({
     "script",

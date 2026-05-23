@@ -60,6 +60,16 @@ def _print_event_summary(event: dict) -> None:
         return
 
     if event_type == "done":
+        results = event.get("results")
+        if results:
+            hostnames, products, extracted, non_extracted = _summarize_results(results)
+            print(
+                f"total: "
+                f"hostnames={hostnames} "
+                f"products={products} "
+                f"extracted={extracted} "
+                f"non_extracted={non_extracted}"
+            )
         print("done")
         return
 
@@ -79,6 +89,8 @@ def main() -> None:
             if not line:
                 continue
             event = json.loads(line)
+            with open("response.json", "w") as f:
+                json.dump(event, f, ensure_ascii=False, indent=2)
             _print_event_summary(event)
 
             if event.get("type") == "done":

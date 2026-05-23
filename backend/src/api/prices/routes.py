@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter
@@ -42,12 +43,34 @@ async def search_prices(payload: PriceSearchRequest) -> StreamingResponse:
 
 
 async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str]:
+    request_started = time.perf_counter()
+    source_timings: dict[str, float] = {}
+    spellcheck_sec = 0.0
+
+    logger.info(
+        "Price search start: query=%r limit=%d skip=%d location=%r",
+        payload.query,
+        payload.limit,
+        payload.skip,
+        payload.location,
+    )
+
     query = payload.query
     fixed_query: str | None = None
     if not payload.bypass_spellchecker:
+        spell_started = time.perf_counter()
         query = await asyncio.to_thread(spellcheck, payload.query)
+        spellcheck_sec = time.perf_counter() - spell_started
         if query != payload.query:
             fixed_query = query
+        logger.info(
+            "Price search spellcheck finished in %.2fs (query=%r -> %r)",
+            spellcheck_sec,
+            payload.query,
+            query,
+        )
+
+    parsers_started = time.perf_counter()
 
     yield _ndjson_line(
         {
@@ -61,6 +84,8 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
     sources_done = 0
 
     async def pump_yandex() -> None:
+        started = time.perf_counter()
+        error: str | None = None
         try:
             async for batch in iter_yandex_market_products(
                 query,
@@ -80,12 +105,25 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
                     )
             await queue.put(("source_done", {"source": YANDEX_SOURCE, "error": None}))
         except Exception as exc:
+            error = str(exc)
             logger.exception("Yandex Market stream error for %r", query)
             await queue.put(
-                ("source_done", {"source": YANDEX_SOURCE, "error": str(exc)}),
+                ("source_done", {"source": YANDEX_SOURCE, "error": error}),
+            )
+        finally:
+            elapsed = time.perf_counter() - started
+            source_timings[YANDEX_SOURCE] = elapsed
+            logger.info(
+                "Price search %s finished in %.2fs (query=%r, error=%s)",
+                YANDEX_SOURCE,
+                elapsed,
+                query,
+                error or "none",
             )
 
     async def pump_wildberries() -> None:
+        started = time.perf_counter()
+        error: str | None = None
         try:
             async for batch in iter_wildberries_products(
                 query,
@@ -105,12 +143,25 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
                     )
             await queue.put(("source_done", {"source": WILDBERRIES_SOURCE, "error": None}))
         except Exception as exc:
+            error = str(exc)
             logger.exception("Wildberries stream error for %r", query)
             await queue.put(
-                ("source_done", {"source": WILDBERRIES_SOURCE, "error": str(exc)}),
+                ("source_done", {"source": WILDBERRIES_SOURCE, "error": error}),
+            )
+        finally:
+            elapsed = time.perf_counter() - started
+            source_timings[WILDBERRIES_SOURCE] = elapsed
+            logger.info(
+                "Price search %s finished in %.2fs (query=%r, error=%s)",
+                WILDBERRIES_SOURCE,
+                elapsed,
+                query,
+                error or "none",
             )
 
     async def pump_ozon() -> None:
+        started = time.perf_counter()
+        error: str | None = None
         try:
             async for batch in iter_ozon_products(
                 query,
@@ -130,9 +181,20 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
                     )
             await queue.put(("source_done", {"source": OZON_SOURCE, "error": None}))
         except Exception as exc:
+            error = str(exc)
             logger.exception("Ozon stream error for %r", query)
             await queue.put(
-                ("source_done", {"source": OZON_SOURCE, "error": str(exc)}),
+                ("source_done", {"source": OZON_SOURCE, "error": error}),
+            )
+        finally:
+            elapsed = time.perf_counter() - started
+            source_timings[OZON_SOURCE] = elapsed
+            logger.info(
+                "Price search %s finished in %.2fs (query=%r, error=%s)",
+                OZON_SOURCE,
+                elapsed,
+                query,
+                error or "none",
             )
 
     tasks = [
@@ -159,6 +221,21 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
             "query": payload.query,
             "fixed_query": fixed_query,
         },
+    )
+
+    parsers_sec = time.perf_counter() - parsers_started
+    total_sec = time.perf_counter() - request_started
+    logger.info(
+        "Price search finished in %.2fs (query=%r): "
+        "Yandex Market=%.2fs, Wildberries=%.2fs, Ozon=%.2fs, "
+        "parsers_parallel=%.2fs, spellcheck=%.2fs",
+        total_sec,
+        payload.query,
+        source_timings.get(YANDEX_SOURCE, 0.0),
+        source_timings.get(WILDBERRIES_SOURCE, 0.0),
+        source_timings.get(OZON_SOURCE, 0.0),
+        parsers_sec,
+        spellcheck_sec,
     )
 
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import re
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from urllib.parse import quote
@@ -222,6 +224,7 @@ class OzonParser:
         self._context: BrowserContext | None = None
         self._page: Page | None = None
         self._bridge_upstream: str | None = None
+        self._cookies_path: Path | None = None
 
     async def __aenter__(self) -> OzonParser:
         await self.start()
@@ -244,15 +247,18 @@ class OzonParser:
         self._context, self._page, self._bridge_upstream = await open_cloak_session(config)
         cookies_path = Path(self.cookies_file) if self.cookies_file else None
         if cookies_path and cookies_path.is_file():
+            self._cookies_path = cookies_path.resolve()
             try:
-                await apply_cookies_to_context(
+                count = await apply_cookies_to_context(
                     self._context,
                     self._page,
-                    cookies_path.resolve(),
+                    self._cookies_path,
                     page_load_timeout=int(self.page_load_timeout or 20),
                 )
+                _log_cookie_session_hint(self._cookies_path, count)
             except Exception as exc:
                 logger.error("Ozon cookies load failed (%s); continuing without cookies", exc)
+                self._cookies_path = None
 
     async def close(self, *, force: bool = False) -> None:
         await close_cloak_session(
@@ -283,7 +289,29 @@ class OzonParser:
             return min(configured, 28.0 if self.keep_alive else 12.0)
         return configured
 
-    async def _goto(self, url: str, *, fast: bool | None = None) -> None:
+    async def _reload_cookies(self) -> bool:
+        if not self._cookies_path or not self._context or not self._page:
+            return False
+        try:
+            count = await apply_cookies_to_context(
+                self._context,
+                self._page,
+                self._cookies_path,
+                page_load_timeout=int(self.page_load_timeout or 20),
+            )
+            logger.info("Ozon cookies reloaded: %d from %s", count, self._cookies_path.name)
+            return True
+        except Exception as exc:
+            logger.error("Ozon cookies reload failed: %s", exc)
+            return False
+
+    async def _goto(
+        self,
+        url: str,
+        *,
+        fast: bool | None = None,
+        cookies_retry: bool = True,
+    ) -> None:
         use_fast = self.keep_alive and not self.slow_mode if fast is None else fast
         await goto(
             self._p,
@@ -298,10 +326,24 @@ class OzonParser:
         elif not self.keep_alive:
             await self._sleep(0.3, 0.5)
         if await self._is_blocked():
+            if cookies_retry and await self._reload_cookies():
+                logger.warning("Ozon blocked at %s — retrying after cookie reload", url)
+                await self._goto(url, fast=fast, cookies_retry=False)
+                return
             raise OzonAccessError(
                 f"Ozon ограничил доступ: {url}. Проверьте proxy/cookies (CloakBrowser).",
                 url=url,
             )
+
+    async def warmup_session(self) -> None:
+        logger.info("Ozon session warmup")
+        await self._goto(OZON_HOME, fast=True, cookies_retry=False)
+        await self._dismiss_overlays()
+        if await self._is_blocked():
+            logger.warning("Ozon warmup: blocked (%s)", await self._page_context())
+            if await self._reload_cookies():
+                await self._goto(OZON_HOME, fast=True, cookies_retry=False)
+                await self._dismiss_overlays()
 
     async def _page_context(self) -> str:
         try:
@@ -314,19 +356,29 @@ class OzonParser:
 
     def _serp_wait_timeout(self) -> float:
         base = float(self.element_wait_timeout)
-        if self.keep_alive:
-            return min(max(base, 10.0), 15.0)
+        if self.keep_alive and not self.slow_mode:
+            return min(max(base, 4.0), 12.0)
         return min(max(base, 10.0), 15.0)
 
     async def _wait_serp_ready(self, timeout: float) -> None:
         await wait_for_function(self._p, SERP_PRODUCTS_READY, timeout_sec=timeout, poll_interval_sec=0.15)
 
     async def _wait_serp_settled(self) -> None:
+        timeout_ms = 5_000 if self.keep_alive and not self.slow_mode else 8_000
         try:
-            await self._p.wait_for_load_state("domcontentloaded", timeout=8_000)
+            await self._p.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
         except Exception:
             pass
-        await self._sleep(0.15, 0.3)
+        if self.keep_alive and not self.slow_mode:
+            await self._sleep(0.05, 0.12)
+        else:
+            await self._sleep(0.15, 0.3)
+
+    def _is_on_ozon(self) -> bool:
+        try:
+            return "ozon.ru" in (self._p.url or "")
+        except Exception:
+            return False
 
     async def _apply_delivery_city(self, city: str) -> None:
         if city == "Москва":
@@ -355,6 +407,19 @@ class OzonParser:
         logger.info("Поиск: %s", query)
         search_url = f"{OZON_HOME}search/?text={quote(query)}&from_global=true"
         cards_timeout = self._serp_wait_timeout()
+
+        # Pooled sessions: search via homepage input (less aggressive than direct SERP URL).
+        if self.keep_alive and not self.slow_mode:
+            try:
+                await self._search_via_input(query)
+                return
+            except OzonAccessError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Ozon search via input failed (%s), trying direct SERP URL",
+                    exc,
+                )
 
         for attempt in range(1, 3):
             logger.info("Ozon SERP load attempt %d/2", attempt)
@@ -411,14 +476,20 @@ class OzonParser:
 
     async def _search_via_input(self, query: str) -> None:
         serp_timeout = self._serp_wait_timeout()
-        await self._goto(OZON_HOME, fast=False)
+        use_fast = self.keep_alive and not self.slow_mode
+        if not self._is_on_ozon():
+            await self._goto(OZON_HOME, fast=use_fast)
         await self._dismiss_overlays()
         if await self._is_blocked():
             raise OzonAccessError(f"Ozon ограничил доступ ({await self._page_context()})")
         if not await self._try_fill_search_input(query):
             raise OzonAccessError("Поле поиска не найдено")
-        await self._sleep(0.5, 0.9)
+        if use_fast:
+            await self._sleep(0.25, 0.45)
+        else:
+            await self._sleep(0.5, 0.9)
         await self._wait_serp_ready(serp_timeout)
+        await self._wait_serp_settled()
 
     async def _scroll_step(self) -> None:
         await evaluate(self._p, SCROLL_STEP_JS)
@@ -467,12 +538,22 @@ class OzonParser:
         rounds = (limit + items_per_scroll - 1) // items_per_scroll + 2
         return max(3, min(rounds, 30))
 
+    def _listing_from_composer(self, url: str, composer: dict) -> dict:
+        return {
+            "url": url,
+            "title": composer.get("title") or "Без названия",
+            "price": composer.get("price"),
+            "originalPrice": composer.get("originalPrice"),
+            "image": composer.get("image"),
+        }
+
     async def collect_products_batched(
         self,
         limit: int,
         *,
         batch_size: int = 10,
     ) -> AsyncIterator[list[dict]]:
+        collect_started = time.perf_counter()
         ordered: list[dict] = []
         seen: set[str] = set()
         stale = 0
@@ -480,15 +561,15 @@ class OzonParser:
         last_sent = 0
         max_rounds = self._scroll_rounds_for_limit(limit)
 
-        logger.info("Прокрутка выдачи для %d товаров (до %d раундов)...", limit, max_rounds)
-
         await self._wait_serp_settled()
 
         composer_by_url: dict[str, dict] = {}
+        composer_started = time.perf_counter()
         try:
             composer_by_url = await self._fetch_composer_by_url()
         except Exception as exc:
             logger.warning("Ozon composer-api fetch failed: %s", exc)
+        composer_sec = time.perf_counter() - composer_started
 
         def emit_pending(force: bool = False) -> list[list[dict]]:
             nonlocal last_sent
@@ -502,6 +583,32 @@ class OzonParser:
                 last_sent = len(ordered)
                 batches.append(chunk)
             return batches
+
+        if len(composer_by_url) >= limit:
+            for url, composer in composer_by_url.items():
+                if url in seen:
+                    continue
+                seen.add(url)
+                ordered.append(self._listing_from_composer(url, composer))
+                if len(ordered) >= limit:
+                    break
+            for batch in emit_pending(force=True):
+                yield batch
+            logger.info(
+                "Ozon collect: composer-only %d/%d items in %.2fs (composer-api %.2fs, no scroll)",
+                len(ordered),
+                limit,
+                time.perf_counter() - collect_started,
+                composer_sec,
+            )
+            return
+
+        logger.info(
+            "Ozon collect: DOM scroll for %d items (composer had %d, up to %d rounds)",
+            limit,
+            len(composer_by_url),
+            max_rounds,
+        )
 
         for rnd in range(max_rounds):
             if rnd > 0 and await self._is_blocked():
@@ -527,15 +634,7 @@ class OzonParser:
                     if url in seen:
                         continue
                     seen.add(url)
-                    ordered.append(
-                        {
-                            "url": url,
-                            "title": composer.get("title") or "Без названия",
-                            "price": composer.get("price"),
-                            "originalPrice": composer.get("originalPrice"),
-                            "image": composer.get("image"),
-                        }
-                    )
+                    ordered.append(self._listing_from_composer(url, composer))
                     if len(ordered) >= limit:
                         for batch in emit_pending(force=True):
                             yield batch
@@ -561,6 +660,15 @@ class OzonParser:
 
         for batch in emit_pending(force=True):
             yield batch
+
+        logger.info(
+            "Ozon collect: finished %d/%d items in %.2fs (composer-api %.2fs, %d scroll rounds)",
+            len(ordered),
+            limit,
+            time.perf_counter() - collect_started,
+            composer_sec,
+            max_rounds,
+        )
 
     async def collect_products(self, limit: int) -> list[dict]:
         items: list[dict] = []
@@ -680,6 +788,28 @@ class OzonParser:
                 await asyncio.sleep(pause)
             results.append(await self._parse_product_page(item["url"], item, pos))
         return results
+
+
+def _log_cookie_session_hint(cookies_path: Path, count: int) -> None:
+    try:
+        raw = json.loads(cookies_path.read_text(encoding="utf-8"))
+        items = raw.get("cookies", raw) if isinstance(raw, dict) else raw
+        user_id = None
+        if isinstance(items, list):
+            for item in items:
+                if item.get("name") == "__Secure-user-id":
+                    user_id = item.get("value")
+                    break
+        if user_id in (None, "", "0"):
+            logger.warning(
+                "Ozon cookies (%s, %d items): __Secure-user-id=%r looks invalid — "
+                "export fresh cookies from a logged-in browser session",
+                cookies_path.name,
+                count,
+                user_id,
+            )
+    except Exception:
+        pass
 
 
 OzonSeleniumParser = OzonParser

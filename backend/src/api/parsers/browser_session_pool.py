@@ -105,6 +105,16 @@ class BrowserSessionPool:
             if slot < self._wb.size:
                 await asyncio.sleep(1.5)
 
+        async def warmup_ozon(parser: OzonSeleniumParser) -> None:
+            try:
+                await parser.warmup_session()
+            except Exception as exc:
+                logger.warning("Ozon slot warmup failed: %s", exc)
+
+        for slot in range(1, self._ozon.size + 1):
+            logger.info("Ozon warmup slot %d/%d", slot, self._ozon.size)
+            await self._ozon.run(warmup_ozon)  # type: ignore[arg-type]
+
         logger.info(
             "Browser session pool prewarmed (WB slots=%d, Ozon slots=%d)",
             self._wb.size,

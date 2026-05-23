@@ -142,6 +142,35 @@ $defs:
         type: integer
     title: WildberriesSettings
     type: object
+  YandexMarketSettings:
+    properties:
+      proxy:
+        anyOf:
+        - type: string
+        - type: 'null'
+        default: null
+        title: Proxy
+      proxies:
+        items:
+          type: string
+        title: Proxies
+        type: array
+      timeout:
+        default: 30
+        title: Timeout
+        type: integer
+      request_retries:
+        default: 3
+        maximum: 6
+        minimum: 1
+        title: Request Retries
+        type: integer
+      warmup:
+        default: true
+        title: Warmup
+        type: boolean
+    title: YandexMarketSettings
+    type: object
 properties:
   api_settings:
     $ref: '#/$defs/ApiSettings'
@@ -153,6 +182,8 @@ properties:
     $ref: '#/$defs/WildberriesSettings'
   browser_pool_settings:
     $ref: '#/$defs/BrowserPoolSettings'
+  yandex_market_settings:
+    $ref: '#/$defs/YandexMarketSettings'
 required:
 - api_settings
 - auth_settings

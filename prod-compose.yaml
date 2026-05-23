@@ -74,3 +74,10 @@ configs:
             browser_pool_settings:
                 wildberries_pool_size: 2
                 ozon_pool_size: 2
+
+            yandex_market_settings:
+                proxy: "NaTLKpP86D:b35iXcQ25L@103.82.103.253:50705"
+                proxies:
+                    - "NaTLKpP86D:b35iXcQ25L@103.82.103.253:50705"
+                warmup: true
+                timeout: 30

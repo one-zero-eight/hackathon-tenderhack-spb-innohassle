@@ -1,5 +1,6 @@
 import random
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -79,11 +80,19 @@ class OzonSettings(BaseModel):
         return None
 
 
-class BrowserPoolSettings(BaseModel):
-    wildberries_pool_size: int = Field(2, ge=1, le=5)
-    "Number of parallel Chrome sessions for Wildberries"
-    ozon_pool_size: int = Field(2, ge=1, le=5)
-    "Number of parallel Chrome sessions for Ozon"
+def _normalize_socks5_proxy_url(raw: str) -> str:
+    """Yandex Market httpx uses SOCKS5 only."""
+    value = raw.strip()
+    if "://" not in value:
+        return f"socks5://{value}"
+    parsed = urlparse(value)
+    if parsed.scheme in ("socks5", "socks5h"):
+        return value
+    if parsed.scheme in ("http", "https"):
+        return f"socks5://{parsed.netloc}"
+    raise ValueError(
+        f"yandex_market_settings: only socks5 proxy is supported, got {parsed.scheme!r}",
+    )
 
 
 class BrowserPoolSettings(BaseModel):
@@ -91,6 +100,27 @@ class BrowserPoolSettings(BaseModel):
     "Number of parallel Chrome sessions for Wildberries"
     ozon_pool_size: int = Field(2, ge=1, le=5)
     "Number of parallel Chrome sessions for Ozon"
+
+
+class YandexMarketSettings(BaseModel):
+    proxy: str | None = None
+    "SOCKS5 proxy for httpx: user:pass@host:port or socks5://user:pass@host:port"
+    proxies: list[str] = Field(default_factory=list)
+    "SOCKS5 proxy pool; a random entry is used when proxy is not set"
+    timeout: int = 30
+    "httpx request timeout in seconds"
+    request_retries: int = Field(3, ge=1, le=6)
+    "Retries on proxy/connect errors (RemoteProtocolError, timeouts)"
+    warmup: bool = True
+    "Open market.yandex.ru once per client to obtain cookies before search"
+
+    def resolve_proxy(self) -> str | None:
+        raw = self.proxy
+        if not raw and self.proxies:
+            raw = random.choice(self.proxies)
+        if not raw:
+            return None
+        return _normalize_socks5_proxy_url(raw)
 
 
 class WildberriesSettings(BaseModel):
@@ -113,7 +143,7 @@ class Settings(BaseModel):
     ozon_settings: OzonSettings = Field(default_factory=OzonSettings)
     wildberries_settings: WildberriesSettings = Field(default_factory=WildberriesSettings)
     browser_pool_settings: BrowserPoolSettings = Field(default_factory=BrowserPoolSettings)
-    browser_pool_settings: BrowserPoolSettings = Field(default_factory=BrowserPoolSettings)
+    yandex_market_settings: YandexMarketSettings = Field(default_factory=YandexMarketSettings)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "Settings":

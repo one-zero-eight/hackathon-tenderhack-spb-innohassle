@@ -2,33 +2,172 @@
 Yandex Market Price Search Script
 Uses httpx to fetch search page and parse embedded JSON-LD data.
 """
+import asyncio
 import html as html_lib
 import json
 import logging
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
 from src.api.parsers.geocoder import resolve_ym_region
 from src.api.parsers.ozon.user_agent import pick_user_agent
-from src.config import api_settings
+from src.config import api_settings, yandex_market_settings
 
 logger = logging.getLogger(__name__)
 
+YANDEX_HOME_URL = "https://market.yandex.ru/"
 YANDEX_SEARCH_URL = "https://market.yandex.ru/search"
 YANDEX_PAGE_SIZE = 8
 MAX_YANDEX_PAGES = 20
 
 
-def _build_headers() -> dict[str, str]:
+class YandexMarketAccessError(RuntimeError):
+    """Captcha, redirect loop, or anti-bot page from Yandex Market."""
+
+
+_RETRYABLE_HTTPX_ERRORS = (
+    httpx.RemoteProtocolError,
+    httpx.ConnectError,
+    httpx.ProxyError,
+    httpx.NetworkError,
+    httpx.ReadTimeout,
+    httpx.ConnectTimeout,
+    httpx.WriteTimeout,
+    httpx.PoolTimeout,
+)
+
+
+def _proxy_log_label(proxy_url: str) -> str:
+    parsed = urlparse(proxy_url)
+    host = parsed.hostname or "?"
+    port = parsed.port or ""
+    suffix = f":{port}" if port else ""
+    return f"{parsed.scheme}://***@{host}{suffix}"
+
+
+def _build_headers(*, referer: str | None = None) -> dict[str, str]:
     return {
         "User-Agent": pick_user_agent(),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,*/*;q=0.8"
+        ),
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Upgrade-Insecure-Requests": "1",
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin" if referer else "none",
+        "Sec-Fetch-User": "?1",
+        "Referer": referer or YANDEX_HOME_URL,
     }
+
+
+def _is_captcha_response(response: httpx.Response) -> bool:
+    url = str(response.url).lower()
+    if "showcaptcha" in url or "/captcha" in url:
+        return True
+    for hop in response.history:
+        location = (hop.headers.get("location") or "").lower()
+        if "showcaptcha" in location or "/captcha" in location:
+            return True
+    snippet = (response.text or "")[:8000].lower()
+    return any(
+        marker in snippet
+        for marker in (
+            "smartcaptcha",
+            "yandex captcha",
+            "подтвердите, что запросы",
+            "я не робот",
+        )
+    )
+
+
+def _ensure_ok_response(response: httpx.Response, *, context: str) -> None:
+    if _is_captcha_response(response):
+        raise YandexMarketAccessError(
+            f"Yandex Market captcha during {context} "
+            f"(url={response.url}). Set proxy in yandex_market_settings (RU IP recommended).",
+        )
+    if response.has_redirect_location:
+        location = response.headers.get("location", "")
+        raise YandexMarketAccessError(
+            f"Yandex Market redirect during {context}: "
+            f"{response.status_code} -> {location}",
+        )
+    if response.status_code >= 400:
+        response.raise_for_status()
+
+
+def _build_client() -> httpx.AsyncClient:
+    proxy = yandex_market_settings.resolve_proxy()
+    timeout = httpx.Timeout(
+        float(yandex_market_settings.timeout),
+        connect=min(20.0, float(yandex_market_settings.timeout)),
+    )
+    headers = _build_headers()
+    kwargs: dict[str, object] = {
+        "timeout": timeout,
+        "headers": headers,
+        "follow_redirects": True,
+        "http2": False,
+    }
+    if proxy:
+        kwargs["proxy"] = proxy
+        logger.info("Yandex Market httpx proxy: %s", _proxy_log_label(proxy))
+    else:
+        logger.warning(
+            "Yandex Market httpx client without proxy — captcha likely on datacenter IPs",
+        )
+    return httpx.AsyncClient(**kwargs)  # type: ignore[arg-type]
+
+
+async def _get_with_retries(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    context: str,
+    **kwargs: object,
+) -> httpx.Response:
+    retries = yandex_market_settings.request_retries
+    last_exc: BaseException | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return await client.get(url, **kwargs)  # type: ignore[arg-type]
+        except _RETRYABLE_HTTPX_ERRORS as exc:
+            last_exc = exc
+            logger.warning(
+                "Yandex Market %s failed (attempt %d/%d): %s",
+                context,
+                attempt,
+                retries,
+                exc,
+            )
+            if attempt < retries:
+                await asyncio.sleep(0.6 * attempt)
+    assert last_exc is not None
+    raise RuntimeError(
+        f"Yandex Market {context}: SOCKS5 proxy/network error after {retries} attempts: "
+        f"{last_exc}",
+    ) from last_exc
+
+
+async def _warmup_client(client: httpx.AsyncClient) -> None:
+    try:
+        response = await _get_with_retries(
+            client,
+            YANDEX_HOME_URL,
+            context="warmup",
+            headers=_build_headers(),
+            follow_redirects=True,
+        )
+        _ensure_ok_response(response, context="warmup")
+    except (YandexMarketAccessError, RuntimeError) as exc:
+        logger.warning("Yandex Market warmup skipped: %s", exc)
 
 
 async def parse_yandex_market_products(
@@ -65,14 +204,24 @@ async def parse_yandex_market_products(
     )
 
     try:
-        async with httpx.AsyncClient(timeout=15, headers=_build_headers()) as client:
+        async with _build_client() as client:
+            if yandex_market_settings.warmup:
+                await _warmup_client(client)
+
             for page in range(1, max_pages + 1):
                 params: dict[str, object] = {"text": query, "lr": lr}
                 if page > 1:
                     params["page"] = page
 
-                response = await client.get(YANDEX_SEARCH_URL, params=params)
-                response.raise_for_status()
+                response = await _get_with_retries(
+                    client,
+                    YANDEX_SEARCH_URL,
+                    context=f"search page {page}",
+                    params=params,
+                    headers=_build_headers(referer=YANDEX_HOME_URL),
+                    follow_redirects=True,
+                )
+                _ensure_ok_response(response, context=f"search page {page}")
 
                 page_results = _parse_yandex_market_html(response.text, target_count, skip=0)
                 if not page_results:
@@ -103,6 +252,8 @@ async def parse_yandex_market_products(
                     break
 
         return results[skip:target_count]
+    except YandexMarketAccessError:
+        raise
     except Exception as exc:
         logger.exception("Yandex Market parse failed for %r", query)
         raise RuntimeError(f"Failed to scrape Yandex Market: {exc}") from exc

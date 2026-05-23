@@ -30,15 +30,6 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        /** MarketplacePriceResult */
-        MarketplacePriceResult: {
-            /** Source */
-            source: string;
-            /** Prices */
-            prices: components["schemas"]["ProductPrice"][];
-            /** Error */
-            error?: string | null;
-        };
         /** PriceSearchRequest */
         PriceSearchRequest: {
             /** Query */
@@ -60,35 +51,9 @@ export interface components {
             bypass_spellchecker: boolean;
             /**
              * Location
-             * @description City or region name for location-based pricing (e.g. 'Санкт-Петербург', 'Novosibirsk'). Defaults to Moscow when omitted.
+             * @description City or region for regional pricing on WB, Yandex Market, and Ozon. Defaults to Moscow.
              */
             location?: string | null;
-        };
-        /** PriceSearchResponse */
-        PriceSearchResponse: {
-            /** Query */
-            query: string;
-            /** Fixed Query */
-            fixed_query?: string | null;
-            /** Results */
-            results: components["schemas"]["MarketplacePriceResult"][];
-        };
-        /** ProductPrice */
-        ProductPrice: {
-            /** Source */
-            source: string;
-            /** Price */
-            price?: number | null;
-            /** Name */
-            name?: string | null;
-            /** Brand */
-            brand?: string | null;
-            /** Original Price */
-            original_price?: number | null;
-            /** Url */
-            url?: string | null;
-            /** Image Url */
-            image_url?: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -107,10 +72,7 @@ export interface components {
     pathItems: never;
 }
 export type SchemaHttpValidationError = components['schemas']['HTTPValidationError'];
-export type SchemaMarketplacePriceResult = components['schemas']['MarketplacePriceResult'];
 export type SchemaPriceSearchRequest = components['schemas']['PriceSearchRequest'];
-export type SchemaPriceSearchResponse = components['schemas']['PriceSearchResponse'];
-export type SchemaProductPrice = components['schemas']['ProductPrice'];
 export type SchemaValidationError = components['schemas']['ValidationError'];
 export type $defs = Record<string, never>;
 export interface operations {
@@ -133,7 +95,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PriceSearchResponse"];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

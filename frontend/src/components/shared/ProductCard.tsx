@@ -23,6 +23,7 @@ type ViewAllCardProps = {
   query?: string
   location?: string
   layout?: CardLayout
+  compact?: boolean
 }
 
 function productLinkProps(siteSlug: string, product: Product, query: string, location?: string, external?: boolean) {
@@ -64,16 +65,7 @@ function ProductImage({ product, className }: { product: Product; className?: st
   const imageUrl = normalizeProductImageUrl(product.imageUrl)
 
   if (imageUrl && !failed) {
-    return (
-      <img
-        src={imageUrl}
-        alt=""
-        loading="lazy"
-        referrerPolicy="no-referrer"
-        onError={() => setFailed(true)}
-        className={cn('h-full w-full object-cover object-center', className)}
-      />
-    )
+    return <img src={imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} className={cn('h-full w-full object-cover object-center', className)} />
   }
 
   return <ProductImageSkeleton className={className} />
@@ -88,12 +80,12 @@ export function ProductCard({ product, siteSlug, query = '', location, layout = 
 
   if (layout === 'row') {
     return (
-      <article className={cn('flex items-start overflow-hidden rounded-3xl p-2', cardBg, cardBorder)}>
-        <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className={cn('block w-28 shrink-0 sm:w-32', imageFrameClass)}>
+      <article className={cn('flex items-start overflow-hidden rounded-3xl', cardBg, cardBorder)}>
+        <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className={cn('m-3 block w-28 shrink-0 sm:w-32', imageFrameClass)}>
           <ProductImage product={product} />
         </ProductLink>
-        <div className="flex min-w-0 flex-1 flex-col justify-start gap-1 px-2 py-1 sm:px-3">
-          <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="line-clamp-2 text-sm leading-snug font-medium text-black">
+        <div className="flex min-w-0 flex-1 flex-col justify-start gap-1 px-2 py-5 sm:px-3">
+          <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="line-clamp-2 text-base leading-snug font-medium text-black">
             {product.name}
           </ProductLink>
           {showPrice && (
@@ -126,7 +118,7 @@ export function ProductCard({ product, siteSlug, query = '', location, layout = 
   )
 }
 
-export function ViewAllCard({ siteSlug, query = '', location, layout = 'carousel' }: ViewAllCardProps) {
+export function ViewAllCard({ siteSlug, query = '', location, layout = 'carousel', compact = false }: ViewAllCardProps) {
   const isRow = layout === 'row'
 
   return (
@@ -134,11 +126,15 @@ export function ViewAllCard({ siteSlug, query = '', location, layout = 'carousel
       to="/sites/$siteName"
       params={{ siteName: siteSlug }}
       search={{ q: query, location }}
-      className={cn('flex min-w-0 items-center justify-center rounded-2xl bg-white text-black', isRow ? 'min-h-30 w-full p-4' : 'h-full min-h-0 flex-col gap-2 p-2', layout === 'tile' ? 'aspect-168/248 w-full' : undefined)}
+      className={cn(
+        'group flex min-w-0 items-center justify-center rounded-2xl bg-white text-black',
+        isRow ? 'min-h-30 w-full p-4' : 'h-full min-h-0 flex-col',
+        compact ? 'p-1' : 'gap-2 p-2',
+        layout === 'tile' ? 'aspect-168/248 w-full' : undefined,
+      )}
     >
-      <span className="flex items-center gap-2 text-sm font-semibold sm:text-base">
-        Все
-        <IoArrowForward size={20} />
+      <span className={cn('flex items-center gap-2 font-semibold', compact ? 'text-sm' : 'text-sm sm:text-base')}>
+        <IoArrowForward size={compact ? 18 : 20} className="transition duration-200 group-hover:translate-x-1" />
       </span>
     </Link>
   )

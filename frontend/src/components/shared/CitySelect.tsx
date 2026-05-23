@@ -2,10 +2,24 @@ import Dropdown from '@/components/ui/Dropdown'
 import { useCity } from '@/hooks/useCity'
 import { filterCities, getPopularCities, mergeCityOptions, searchCities, type CityOption } from '@/lib/geo'
 import { useEffect, useMemo, useState } from 'react'
-import { IoLocationSharp } from 'react-icons/io5'
+import { IoLocationSharp, IoSearch } from 'react-icons/io5'
 
 type Props = {
   className?: string
+}
+
+function CityMenuHeader({ search, remoteQuery }: { search: string; remoteQuery: string }) {
+  const trimmed = search.trim()
+
+  if (!trimmed) {
+    return <p className="text-gray px-4 pt-2.5 pb-0.5 text-[11px] font-medium tracking-wide uppercase">Популярные города</p>
+  }
+
+  if (remoteQuery) {
+    return <p className="text-gray px-4 pt-2.5 pb-0.5 text-[11px] font-medium tracking-wide uppercase">Результаты поиска</p>
+  }
+
+  return <p className="text-gray px-4 pt-2.5 pb-0.5 text-[11px] font-medium tracking-wide uppercase">Совпадения</p>
 }
 
 export default function CitySelect({ className }: Props) {
@@ -50,7 +64,9 @@ export default function CitySelect({ className }: Props) {
       searchable
       searchSize="md"
       searchPlaceholder="Поиск города"
-      menuClassName="min-w-80 w-80"
+      menuClassName="w-80 min-w-80"
+      menuHeader={<CityMenuHeader search={search} remoteQuery={remoteQuery} />}
+      searchLeadingIcon={<IoSearch size={16} />}
       searchValue={search}
       onSearchChange={setSearch}
       emptyMessage="Ничего не найдено"

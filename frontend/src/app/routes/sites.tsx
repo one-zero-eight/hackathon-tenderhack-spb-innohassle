@@ -34,7 +34,7 @@ export const Route = createFileRoute('/sites')({
 const categoryTone: Record<SiteResult['kind'], string> = {
   ozon: 'border-blue-300 bg-blue-50 text-blue-700',
   wildberries: 'border-fuchsia-300 bg-fuchsia-50 text-fuchsia-700',
-  yandex: 'border-yellow-300 bg-yellow-50 text-yellow-700',
+  yandex: 'border-orange-300 bg-orange-50 text-orange-700',
   other: 'border-gray-blue bg-gray-50 text-gray-700',
 }
 
@@ -51,8 +51,8 @@ function SitesPage() {
   const { data: priceData, isLoading, isError, error } = usePriceSearch({ query: q, location, bypassSpellchecker: strict })
   const sites = priceData?.sites ?? []
   const effectiveQuery = priceData?.effectiveQuery ?? q.trim()
-  const correction = !isLoading && priceData ? getQueryCorrection(q, priceData.fixedQuery, strict) : null
-  const streamEnabled = hasQuery && !isLoading && effectiveQuery.length > 0
+  const correction = priceData ? getQueryCorrection(q, priceData.fixedQuery, strict) : null
+  const streamEnabled = hasQuery && effectiveQuery.length > 0
   const { sites: otherSiteResults, loading: otherLoading, error: otherError } = useYandexSearchExtended(effectiveQuery, location, streamEnabled)
 
   useEffect(() => {
@@ -74,6 +74,8 @@ function SitesPage() {
   const { main: mainSiteResults } = splitSiteResults(sites)
   const hasMainProducts = mainSiteResults.some((site) => site.products.length > 0)
   const hasOtherProducts = otherSiteResults.some((site) => site.products.length > 0)
+  const showMarketplaceSkeleton = isLoading && !hasMainProducts
+  const showMarketplaceStreaming = isLoading && hasMainProducts
   const showEmpty = hasQuery && !isLoading && !otherLoading && !isError && !otherError && !hasMainProducts && !hasOtherProducts
 
   const submitSearch = (e: React.FormEvent) => {
@@ -119,11 +121,11 @@ function SitesPage() {
       <main className="mx-auto max-w-7xl">
         <div className="mb-5">
           <p className="text-gray text-sm">Результаты поиска</p>
-          {isLoading ? <div className="bg-pale-blue mt-2 h-8 w-56 max-w-full animate-pulse rounded-lg" /> : <h1 className="text-2xl font-semibold text-black">{effectiveQuery || 'Все товары'}</h1>}
+          {isLoading && !hasMainProducts ? <div className="bg-pale-blue mt-2 h-8 w-56 max-w-full animate-pulse rounded-lg" /> : <h1 className="text-2xl font-semibold text-black">{effectiveQuery || 'Все товары'}</h1>}
         </div>
 
         <div className="space-y-6 last:mb-0">
-          {isLoading ? (
+          {showMarketplaceSkeleton ? (
             <div className="space-y-6">
               <div className="text-gray flex items-center justify-center gap-2 py-2 text-sm">
                 <LoadingSpinner size="sm" />
@@ -131,19 +133,29 @@ function SitesPage() {
               </div>
               <ResultsSkeleton />
             </div>
-          ) : isError ? (
+          ) : isError && !hasMainProducts ? (
             <p className="text-red py-4 text-center">{error instanceof Error ? error.message : 'Не удалось загрузить результаты маркетплейсов'}</p>
           ) : (
-            mainSiteResults.map((site) => <SiteSection key={site.slug} site={site} query={effectiveQuery} location={location} />)
+            <>
+              {mainSiteResults.map((site) => (
+                <SiteSection key={site.slug} site={site} query={effectiveQuery} location={location} />
+              ))}
+              {showMarketplaceStreaming && (
+                <div className="text-gray flex items-center justify-center gap-2 py-2 text-sm">
+                  <LoadingSpinner size="sm" />
+                  <span>Загружаем ещё товары с маркетплейсов…</span>
+                </div>
+              )}
+            </>
           )}
 
           {hasQuery && (
             <>
-              <div className="flex items-center gap-4 py-6">
+              {/* <div className="flex items-center gap-4 py-6">
                 <div className="bg-gray-blue h-px flex-1" aria-hidden />
                 <h2 className="shrink-0 text-xl font-semibold text-black">Другие источники</h2>
                 <div className="bg-gray-blue h-px flex-1" aria-hidden />
-              </div>
+              </div> */}
 
               {otherLoading && otherSiteResults.length === 0 && (
                 <div className="text-gray flex items-center justify-center gap-2 py-4 text-sm">
@@ -184,16 +196,50 @@ function medianPrice(prices: number[]): number | null {
   return sorted[mid]
 }
 
+function otherSourceFaviconUrl(hostname: string): string {
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=128`
+}
+
+function SiteTitle({ site, className }: { site: SiteResult; className?: string }) {
+  const [faviconFailed, setFaviconFailed] = useState(false)
+
+  if (site.logo) {
+    return <img src={site.logo} alt={site.name} className={cn('w-auto object-contain object-left', site.kind === 'ozon' ? 'h-5 max-w-[120px] sm:h-6' : 'h-6 max-w-[160px] sm:h-7')} />
+  }
+
+  if (site.kind === 'other') {
+    return (
+      <div className={cn('flex min-w-0 items-center gap-2', className)}>
+        {!faviconFailed && <img src={otherSourceFaviconUrl(site.name)} alt="" aria-hidden onError={() => setFaviconFailed(true)} className="h-5 w-5 shrink-0 rounded-sm" />}
+        <h2 className="truncate text-xl font-semibold">{site.name}</h2>
+      </div>
+    )
+  }
+
+  return <h2 className="text-xl font-semibold">{site.name}</h2>
+}
+
+function SitePriceStat({ label, value, className }: { label?: string; value?: number; className?: string }) {
+  return (
+    <div className={cn('shrink-0 rounded-2xl bg-white px-3.5 py-2 text-center', className)}>
+      {label && <p className="text-gray text-[11px] font-medium tracking-wide uppercase">{label}</p>}
+      {value && <p className="mt-0.5 text-base leading-tight font-semibold text-nowrap text-black tabular-nums">{formatPrice(value)}</p>}
+    </div>
+  )
+}
+
 function SiteSection({ site, query, location, external = false }: { site: SiteResult; query: string; location: string; external?: boolean }) {
   const visibleCount = useVisibleProductCount()
   const products = site.products.slice(0, visibleCount)
   const pricedProducts = site.products.filter((product) => product.price > 0)
-  const medianProductPrice = medianPrice(pricedProducts.map((product) => product.price))
+  const prices = pricedProducts.map((product) => product.price)
+  const medianProductPrice = medianPrice(prices)
+  const averageProductPrice = prices.length > 0 ? Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length) : null
 
   if (site.error && site.products.length === 0) {
     return (
-      <section className={cn('rounded-3xl border p-4', categoryTone[site.kind])}>
-        <h2 className="text-xl font-semibold">{site.name}</h2>
+      <section className={cn('rounded-4xl border p-4 px-7', categoryTone[site.kind])}>
+        <SiteTitle key={site.slug} site={site} />
         <p className="mt-2 text-sm opacity-80">{site.error}</p>
       </section>
     )
@@ -202,10 +248,10 @@ function SiteSection({ site, query, location, external = false }: { site: SiteRe
   if (site.products.length === 0) return null
 
   return (
-    <section className={cn('rounded-3xl border p-4', categoryTone[site.kind])}>
-      <div className="mb-4 flex items-start justify-between gap-3 px-3 pt-1">
-        <div>
-          <h2 className="text-xl font-semibold">{site.name}</h2>
+    <section className={cn('rounded-4xl border p-4', categoryTone[site.kind])}>
+      <div className="mb-4 grid gap-3" style={{ gridTemplateColumns: `repeat(${visibleCount}, minmax(0, 1fr)) 5rem` }}>
+        <div className="pt-1 pl-3" style={{ gridColumn: `span ${visibleCount - 2}` }}>
+          <SiteTitle key={site.slug} site={site} className="col-span-full" />
           {(site.rating != null || site.reviewsLabel) && (
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
               {site.rating != null && (
@@ -222,18 +268,19 @@ function SiteSection({ site, query, location, external = false }: { site: SiteRe
           )}
           <p className="mt-1 text-sm opacity-80">{site.products.length} товаров найдено</p>
         </div>
-        {medianProductPrice != null && (
-          <div className="shrink-0 text-right text-black">
-            <p className="text-sm opacity-80">Медианная цена:</p>
-            <p className="text-lg font-semibold">{formatPrice(medianProductPrice)}</p>
-          </div>
+        {pricedProducts.length > 1 && (
+          <>
+            {averageProductPrice != null && <SitePriceStat label="Средняя" value={averageProductPrice} className="col-span-1" />}
+            {medianProductPrice != null && <SitePriceStat label="Медиана" value={medianProductPrice} className="col-span-1" />}
+            {/* {medianProductPrice != null && <SitePriceStat className="col-span-1 " />} */}
+          </>
         )}
       </div>
-      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${visibleCount + 1}, minmax(0, 1fr))` }}>
+      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${visibleCount}, minmax(0, 1fr)) 5rem` }}>
         {products.map((product) => (
           <ProductCard key={product.id} product={product} siteSlug={site.slug} query={query} location={location} layout="carousel" external={external} />
         ))}
-        {!external && <ViewAllCard siteSlug={site.slug} query={query} location={location} layout="carousel" />}
+        {!external && <ViewAllCard siteSlug={site.slug} query={query} location={location} layout="carousel" compact />}
       </div>
     </section>
   )

@@ -1,7 +1,7 @@
 import { cn } from '@/lib/cn'
 import cva, { type VariantProps } from '@/lib/cva'
 import { forwardRef, useState, useRef, useEffect, useCallback, type ReactNode } from 'react'
-import { IoChevronUp } from 'react-icons/io5'
+import { IoCheckmark, IoChevronUp } from 'react-icons/io5'
 import Input from '@/components/ui/Input'
 
 interface Option {
@@ -55,6 +55,8 @@ type DropdownProps = VariantProps<typeof dropdownVariants> &
     emptyMessage?: string
     trailingIcon?: ReactNode
     menuClassName?: string
+    menuHeader?: ReactNode
+    searchLeadingIcon?: ReactNode
     searchSize?: 'sm' | 'md' | 'lg'
   }
 
@@ -77,6 +79,8 @@ const Dropdown = forwardRef<HTMLDivElement, DropdownProps>(
       emptyMessage = 'Ничего не найдено',
       trailingIcon,
       menuClassName,
+      menuHeader,
+      searchLeadingIcon,
       searchSize = 'sm',
       ...props
     },
@@ -141,25 +145,47 @@ const Dropdown = forwardRef<HTMLDivElement, DropdownProps>(
           </button>
 
           {isOpen && (
-            <div className={cn('absolute top-full z-50 max-h-80 overflow-y-auto bg-white shadow-lg', variant === 'filled' ? 'border-gray-blue right-0 left-0 border border-t-0' : 'right-0 left-auto', menuClassName)}>
+            <div
+              className={cn(
+                'absolute top-full z-50 flex max-h-80 flex-col overflow-hidden bg-white shadow-lg',
+                variant === 'filled' ? 'border-gray-blue right-0 left-0 border border-t-0' : 'border-gray-blue/60 right-0 left-auto mt-2 rounded-2xl border shadow-xl',
+                menuClassName,
+              )}
+            >
               {searchable && (
-                <div className={cn('p-3', variant === 'filled' ? 'border-gray-blue border-b' : undefined)} onMouseDown={(e) => e.stopPropagation()}>
-                  <Input size={searchSize} variant="fill" placeholder={searchPlaceholder} value={searchValue} onChange={(e) => onSearchChange?.(e.target.value)} />
+                <div className={cn('shrink-0 p-3', variant === 'filled' ? 'border-gray-blue border-b' : 'border-gray-blue/40 bg-pale-blue/30 border-b')} onMouseDown={(e) => e.stopPropagation()}>
+                  <Input size={searchSize} variant="fill" placeholder={searchPlaceholder} value={searchValue} onChange={(e) => onSearchChange?.(e.target.value)} leadingIcon={searchLeadingIcon} className="rounded-xl border-0" />
                 </div>
               )}
-              {options.length === 0 && <p className="text-md text-gray px-4 py-3">{emptyMessage}</p>}
-              {options.map((option, index) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => handleSelect(option)}
-                  onMouseEnter={() => setHoveredIndex(index)}
-                  onMouseLeave={() => setHoveredIndex(null)}
-                  className={cn('text-md hover:text-main-blue w-full cursor-pointer px-4 py-2.5 text-left text-black transition-colors', hoveredIndex === index ? 'text-main-blue' : undefined, dropdownVariants({ size }))}
-                >
-                  {option.label}
-                </button>
-              ))}
+              {menuHeader}
+              <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto px-1.5 py-2">
+                {options.length === 0 && <p className="text-gray px-3 py-3 text-sm">{emptyMessage}</p>}
+                {options.map((option, index) => {
+                  const isSelected = option.value === selectedValue
+                  const isHovered = hoveredIndex === index
+
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => handleSelect(option)}
+                      onMouseEnter={() => setHoveredIndex(index)}
+                      onMouseLeave={() => setHoveredIndex(null)}
+                      className={cn(
+                        'flex w-full cursor-pointer items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-colors',
+                        isSelected ? 'bg-pale-blue/70 text-main-blue font-medium' : 'text-black',
+                        !isSelected && isHovered ? 'text-main-blue' : undefined,
+                        dropdownVariants({ size }),
+                      )}
+                    >
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden>
+                        {isSelected ? <IoCheckmark className="text-main-blue" size={16} /> : null}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           )}
         </div>

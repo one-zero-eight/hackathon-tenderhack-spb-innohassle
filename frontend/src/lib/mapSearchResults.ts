@@ -1,4 +1,4 @@
-import type { SchemaPriceSearchResponse, SchemaProductPrice } from '@/api/core/types'
+import type { MarketplacePriceResult, PriceSearchStreamState, ProductPrice } from '@/api/prices'
 import { normalizeProductImageUrl } from '@/lib/normalizeProductImageUrl'
 import { MARKETPLACE_LOGOS, type Product, type SiteKind, type SiteResult } from '@/lib/searchResults'
 
@@ -46,7 +46,7 @@ function productId(slug: string, url: string | null | undefined, index: number):
   return `${slug}-${index}`
 }
 
-function mapProduct(item: SchemaProductPrice, slug: string, index: number): Product {
+function mapProduct(item: ProductPrice, slug: string, index: number): Product {
   return {
     id: productId(slug, item.url, index),
     name: item.name?.trim() || 'Без названия',
@@ -58,7 +58,7 @@ function mapProduct(item: SchemaProductPrice, slug: string, index: number): Prod
   }
 }
 
-function mapMarketplaceResult(result: SchemaPriceSearchResponse['results'][number]): SiteResult | null {
+function mapMarketplaceResult(result: MarketplacePriceResult): SiteResult | null {
   const meta = SOURCE_META[result.source] ?? {
     slug: slugifySource(result.source),
     name: result.source,
@@ -75,7 +75,7 @@ function mapMarketplaceResult(result: SchemaPriceSearchResponse['results'][numbe
   }
 }
 
-export function mapPriceSearchResponse(response: SchemaPriceSearchResponse): SiteResult[] {
+export function mapPriceSearchResponse(response: PriceSearchStreamState): SiteResult[] {
   return response.results.map(mapMarketplaceResult).filter((site): site is SiteResult => site !== null)
 }
 

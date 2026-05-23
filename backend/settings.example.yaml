@@ -36,4 +36,3 @@ yandex_market_settings:
   proxies: []
   warmup: true
   timeout: 30
-  request_retries: 3

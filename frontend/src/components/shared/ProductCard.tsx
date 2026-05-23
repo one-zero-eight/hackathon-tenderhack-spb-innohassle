@@ -56,7 +56,7 @@ function ProductLink({ product, siteSlug, query, location, external, className, 
 }
 
 function ProductImageSkeleton({ className }: { className?: string }) {
-  return <div aria-hidden className={cn('bg-pale-blue aspect-square w-full animate-pulse rounded-xl', className)} />
+  return <div aria-hidden className={cn('bg-pale-blue aspect-3/4 w-full animate-pulse rounded-xl', className)} />
 }
 
 function ProductImage({ product, className }: { product: Product; className?: string }) {
@@ -64,30 +64,43 @@ function ProductImage({ product, className }: { product: Product; className?: st
   const imageUrl = normalizeProductImageUrl(product.imageUrl)
 
   if (imageUrl && !failed) {
-    return <img src={imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} className={cn('w-full object-cover', className)} />
+    return (
+      <img
+        src={imageUrl}
+        alt=""
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+        className={cn('h-full w-full object-cover object-center', className)}
+      />
+    )
   }
 
   return <ProductImageSkeleton className={className} />
 }
 
+const imageFrameClass = 'block aspect-3/4 w-full overflow-hidden rounded-xl bg-white'
+
 export function ProductCard({ product, siteSlug, query = '', location, layout = 'carousel', surface = 'white', bordered = false, external = false }: ProductCardProps) {
   const cardBg = surface === 'muted' ? 'bg-pale-blue/35' : 'bg-white'
-  const imageWrap = surface === 'muted' ? 'overflow-hidden rounded-xl bg-white' : 'block overflow-hidden rounded-xl bg-white'
   const cardBorder = bordered ? 'border border-gray-blue/60' : undefined
+  const showPrice = product.price > 0
 
   if (layout === 'row') {
     return (
       <article className={cn('flex items-start overflow-hidden rounded-3xl p-2', cardBg, cardBorder)}>
-        <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className={cn('block w-28 shrink-0 sm:w-32', imageWrap)}>
+        <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className={cn('block w-28 shrink-0 sm:w-32', imageFrameClass)}>
           <ProductImage product={product} />
         </ProductLink>
         <div className="flex min-w-0 flex-1 flex-col justify-start gap-1 px-2 py-1 sm:px-3">
           <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="line-clamp-2 text-sm leading-snug font-medium text-black">
             {product.name}
           </ProductLink>
-          <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="text-lg leading-tight font-semibold text-black">
-            {formatPrice(product.price)}
-          </ProductLink>
+          {showPrice && (
+            <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="text-lg leading-tight font-semibold text-black">
+              {formatPrice(product.price)}
+            </ProductLink>
+          )}
         </div>
       </article>
     )
@@ -95,14 +108,16 @@ export function ProductCard({ product, siteSlug, query = '', location, layout = 
 
   return (
     <article className={cn('flex h-full min-w-0 flex-col rounded-3xl p-3', cardBg, cardBorder)}>
-      <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className={imageWrap}>
+      <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className={imageFrameClass}>
         <ProductImage product={product} />
       </ProductLink>
 
       <div className="flex min-w-0 flex-col gap-1 px-0.5 pt-2">
-        <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="truncate text-base leading-tight font-semibold text-black">
-          {formatPrice(product.price)}
-        </ProductLink>
+        {showPrice && (
+          <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="truncate text-base leading-tight font-semibold text-black">
+            {formatPrice(product.price)}
+          </ProductLink>
+        )}
         <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="line-clamp-2 text-sm leading-snug text-black">
           {product.name}
         </ProductLink>

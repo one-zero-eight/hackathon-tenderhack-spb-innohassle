@@ -11,10 +11,26 @@ export type PriceSearchParams = {
   location?: string | null
   limit?: number
   skip?: number
+  bypassSpellchecker?: boolean
 }
 
-export function priceSearchQueryKey({ query, location, limit = PRICE_SEARCH_LIMIT, skip = 0 }: PriceSearchParams) {
-  return ['price-search', query.trim(), location ?? '', limit, skip] as const
+export type PriceSearchData = {
+  sites: SiteResult[]
+  fixedQuery: string | null
+  effectiveQuery: string
+}
+
+export function priceSearchQueryKey({ query, location, limit = PRICE_SEARCH_LIMIT, skip = 0, bypassSpellchecker = false }: PriceSearchParams) {
+  return ['price-search', query.trim(), location ?? '', limit, skip, bypassSpellchecker] as const
+}
+
+function mapPriceSearchData(data: SchemaPriceSearchResponse): PriceSearchData {
+  const fixedQuery = data.fixed_query?.trim() || null
+  return {
+    sites: mapPriceSearchResponse(data),
+    fixedQuery,
+    effectiveQuery: fixedQuery ?? data.query,
+  }
 }
 
 export async function fetchPriceSearch(params: PriceSearchParams): Promise<SchemaPriceSearchResponse> {
@@ -23,6 +39,7 @@ export async function fetchPriceSearch(params: PriceSearchParams): Promise<Schem
     limit: params.limit ?? PRICE_SEARCH_LIMIT,
     skip: params.skip ?? 0,
     location: params.location ?? null,
+    bypass_spellchecker: params.bypassSpellchecker ?? false,
   }
 
   const { data, error } = await eventsFetch.POST('/prices/search', { body })
@@ -37,7 +54,7 @@ export function usePriceSearch(params: PriceSearchParams, enabled = true) {
     queryKey: priceSearchQueryKey(params),
     queryFn: () => fetchPriceSearch(params),
     enabled: enabled && trimmed.length > 0,
-    select: (data) => mapPriceSearchResponse(data),
+    select: mapPriceSearchData,
   })
 }
 
@@ -48,7 +65,7 @@ export function useSiteFromSearch(siteSlug: string, params: PriceSearchParams): 
 
   const data = queryClient.getQueryData<SchemaPriceSearchResponse>(priceSearchQueryKey(params))
   if (!data) return undefined
-  return mapPriceSearchResponse(data).find((site) => site.slug === siteSlug)
+  return mapPriceSearchData(data).sites.find((site) => site.slug === siteSlug)
 }
 
 export function useProductFromSearch(siteSlug: string, productId: string, params: PriceSearchParams) {

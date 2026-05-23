@@ -42,14 +42,15 @@ function ProductPage() {
   const location = locationParam ?? city.label
   const searchParams = { query: q, location }
 
-  const { data: sites = [], isLoading } = usePriceSearch(searchParams)
+  const { data: priceData, isLoading } = usePriceSearch(searchParams)
   const result = useMemo(() => {
+    const sites = priceData?.sites ?? []
     const site = sites.find((item) => item.slug === siteName)
     if (!site) return null
     const product = site.products.find((item) => item.id === productId)
     if (!product) return null
     return { site, product }
-  }, [sites, siteName, productId])
+  }, [priceData, siteName, productId])
 
   if (isLoading) {
     return (

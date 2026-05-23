@@ -27,6 +27,25 @@ function productId(slug: string, href: string | null | undefined, index: number)
   return `${slug}-${index}`
 }
 
+function parseRatingText(value: string | null | undefined): number | null {
+  if (!value) return null
+  const parsed = Number.parseFloat(value.replace(',', '.').trim())
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function pickSiteMeta(products: SearchStreamProduct[]): Pick<SiteResult, 'rating' | 'reviewsLabel'> {
+  for (const product of products) {
+    if (!product.extracted) {
+      const rating = parseRatingText(product.rating)
+      const reviewsLabel = product.reviews?.trim()
+      if (rating != null || reviewsLabel) {
+        return { rating: rating ?? undefined, reviewsLabel: reviewsLabel || undefined }
+      }
+    }
+  }
+  return {}
+}
+
 function mapStreamProduct(product: SearchStreamProduct, slug: string, index: number): Product | null {
   const href = product.href ?? undefined
   const name = product.extracted ? (product.name ?? product.title) : product.title
@@ -49,15 +68,14 @@ export function mapStreamSearchResults(groups: SearchHostnameGroup[]): SiteResul
   return groups
     .map((group) => {
       const slug = slugifyHostname(group.hostname)
-      const products = group.products
-        .map((product, index) => mapStreamProduct(product, slug, index))
-        .filter((product): product is Product => product !== null)
+      const products = group.products.map((product, index) => mapStreamProduct(product, slug, index)).filter((product): product is Product => product !== null)
 
       return {
         slug,
         name: group.hostname,
         kind: 'other' as const,
         products,
+        ...pickSiteMeta(group.products),
       }
     })
     .filter((site) => site.products.length > 0)

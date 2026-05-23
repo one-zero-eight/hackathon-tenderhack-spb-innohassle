@@ -11,7 +11,7 @@ import { useYandexSearchExtended } from '@/hooks/useYandexSearchExtended'
 import { usePriceSearch } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
 import { splitSiteResults } from '@/lib/mapSearchResults'
-import { getQueryCorrection, getResultsQuery } from '@/lib/queryCorrection'
+import { getQueryCorrection } from '@/lib/queryCorrection'
 import { formatPrice, formatSiteRating, type SiteResult } from '@/lib/searchResults'
 import { useVisibleProductCount } from '@/lib/useVisibleProductCount'
 import { useEffect, useState } from 'react'
@@ -38,22 +38,23 @@ const categoryTone: Record<SiteResult['kind'], string> = {
   other: 'border-gray-blue bg-gray-50 text-gray-700',
 }
 
-const SHOW_SEARCH_SUGGESTION = true
 
 function SitesPage() {
   const { q = '', strict = false, location: locationParam } = Route.useSearch()
   const { city, setCity } = useCity()
   const location = city.label
-  const correction = getQueryCorrection(q, strict, SHOW_SEARCH_SUGGESTION)
-  const resultsQuery = getResultsQuery(q, strict, SHOW_SEARCH_SUGGESTION)
   const isCategoryRoute = useRouterState({ select: (state) => state.location.pathname !== '/sites' })
   const navigate = useNavigate()
   const [query, setQuery] = useState(q)
   const [correctionHidden, setCorrectionHidden] = useState(false)
 
-  const hasQuery = resultsQuery.trim().length > 0
-  const { data: sites = [], isLoading, isError, error } = usePriceSearch({ query: resultsQuery, location })
-  const { sites: otherSiteResults, loading: otherLoading, error: otherError } = useYandexSearchExtended(resultsQuery, location, hasQuery)
+  const hasQuery = q.trim().length > 0
+  const { data: priceData, isLoading, isError, error } = usePriceSearch({ query: q, location, bypassSpellchecker: strict })
+  const sites = priceData?.sites ?? []
+  const effectiveQuery = priceData?.effectiveQuery ?? q.trim()
+  const correction = !isLoading && priceData ? getQueryCorrection(q, priceData.fixedQuery, strict) : null
+  const streamEnabled = hasQuery && !isLoading && effectiveQuery.length > 0
+  const { sites: otherSiteResults, loading: otherLoading, error: otherError } = useYandexSearchExtended(effectiveQuery, location, streamEnabled)
 
   useEffect(() => {
     setQuery(q)
@@ -74,8 +75,7 @@ function SitesPage() {
   const { main: mainSiteResults } = splitSiteResults(sites)
   const hasMainProducts = mainSiteResults.some((site) => site.products.length > 0)
   const hasOtherProducts = otherSiteResults.some((site) => site.products.length > 0)
-  const showEmpty =
-    hasQuery && !isLoading && !otherLoading && !isError && !otherError && !hasMainProducts && !hasOtherProducts
+  const showEmpty = hasQuery && !isLoading && !otherLoading && !isError && !otherError && !hasMainProducts && !hasOtherProducts
 
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault()
@@ -119,8 +119,8 @@ function SitesPage() {
 
       <main className="mx-auto max-w-7xl">
         <div className="mb-5">
-          <p className="text-gray text-sm">Результаты поиска · {location}</p>
-          {isLoading ? <div className="bg-pale-blue mt-2 h-8 w-56 max-w-full animate-pulse rounded-lg" /> : <h1 className="text-2xl font-semibold text-black">{resultsQuery || 'Все товары'}</h1>}
+          <p className="text-gray text-sm">Результаты поиска</p>
+          {isLoading ? <div className="bg-pale-blue mt-2 h-8 w-56 max-w-full animate-pulse rounded-lg" /> : <h1 className="text-2xl font-semibold text-black">{effectiveQuery || 'Все товары'}</h1>}
         </div>
 
         <div className="space-y-6 last:mb-0">
@@ -135,7 +135,7 @@ function SitesPage() {
           ) : isError ? (
             <p className="text-red py-4 text-center">{error instanceof Error ? error.message : 'Не удалось загрузить результаты маркетплейсов'}</p>
           ) : (
-            mainSiteResults.map((site) => <SiteSection key={site.slug} site={site} query={resultsQuery} location={location} />)
+            mainSiteResults.map((site) => <SiteSection key={site.slug} site={site} query={effectiveQuery} location={location} />)
           )}
 
           {hasQuery && (
@@ -153,14 +153,10 @@ function SitesPage() {
                 </div>
               )}
 
-              {otherError && otherSiteResults.length === 0 && (
-                <p className="text-gray py-4 text-center text-sm">
-                  {otherError instanceof Error ? otherError.message : 'Не удалось загрузить другие источники'}
-                </p>
-              )}
+              {otherError && otherSiteResults.length === 0 && <p className="text-gray py-4 text-center text-sm">{otherError instanceof Error ? otherError.message : 'Не удалось загрузить другие источники'}</p>}
 
               {otherSiteResults.map((site) => (
-                <SiteSection key={site.slug} site={site} query={resultsQuery} location={location} external />
+                <SiteSection key={site.slug} site={site} query={effectiveQuery} location={location} external />
               ))}
 
               {otherLoading && otherSiteResults.length > 0 && (
@@ -182,7 +178,8 @@ function SitesPage() {
 function SiteSection({ site, query, location, external = false }: { site: SiteResult; query: string; location: string; external?: boolean }) {
   const visibleCount = useVisibleProductCount()
   const products = site.products.slice(0, visibleCount)
-  const averagePrice = site.products.length > 0 ? Math.round(site.products.reduce((sum, product) => sum + product.price, 0) / site.products.length) : null
+  const pricedProducts = site.products.filter((product) => product.price > 0)
+  const averagePrice = pricedProducts.length > 0 ? Math.round(pricedProducts.reduce((sum, product) => sum + product.price, 0) / pricedProducts.length) : null
 
   if (site.error && site.products.length === 0) {
     return (
@@ -200,13 +197,17 @@ function SiteSection({ site, query, location, external = false }: { site: SiteRe
       <div className="mb-4 flex items-start justify-between gap-3 px-3 pt-1">
         <div>
           <h2 className="text-xl font-semibold">{site.name}</h2>
-          {site.rating != null && (
+          {(site.rating != null || site.reviewsLabel) && (
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
-              <span className="inline-flex items-center gap-1">
-                <IoStar className="text-orange shrink-0" size={16} aria-hidden />
-                <span className="font-medium">{formatSiteRating(site.rating)}</span>
-              </span>
-              <span className="opacity-60">|</span>
+              {site.rating != null && (
+                <>
+                  <span className="inline-flex items-center gap-1">
+                    <IoStar className="text-orange shrink-0" size={16} aria-hidden />
+                    <span className="font-medium">{formatSiteRating(site.rating)}</span>
+                  </span>
+                  {site.reviewsLabel && <span className="opacity-60">|</span>}
+                </>
+              )}
               {site.reviewsLabel && <span>{site.reviewsLabel}</span>}
             </div>
           )}

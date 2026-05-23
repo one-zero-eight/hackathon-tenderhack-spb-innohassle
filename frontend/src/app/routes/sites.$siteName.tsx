@@ -109,7 +109,8 @@ function CategoryPage() {
   }, [locationParam, city.label, setCity])
 
   const location = city.label
-  const { data: sites = [], isLoading, isError } = usePriceSearch({ query: q, location })
+  const { data: priceData, isLoading, isError } = usePriceSearch({ query: q, location })
+  const sites = priceData?.sites ?? []
   const site = sites.find((item) => item.slug === siteName)
 
   if (isProductRoute) return <Outlet />

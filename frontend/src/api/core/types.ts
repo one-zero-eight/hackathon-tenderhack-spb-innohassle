@@ -54,6 +54,11 @@ export interface components {
              */
             skip: number;
             /**
+             * Bypass Spellchecker
+             * @default false
+             */
+            bypass_spellchecker: boolean;
+            /**
              * Location
              * @description City or region name for location-based pricing (e.g. 'Санкт-Петербург', 'Novosibirsk'). Defaults to Moscow when omitted.
              */
@@ -63,6 +68,8 @@ export interface components {
         PriceSearchResponse: {
             /** Query */
             query: string;
+            /** Fixed Query */
+            fixed_query?: string | null;
             /** Results */
             results: components["schemas"]["MarketplacePriceResult"][];
         };

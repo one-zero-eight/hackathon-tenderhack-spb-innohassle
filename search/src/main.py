@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from extract_products import ParsedProduct, extract_products
-from fastapi import FastAPI, Query
+from fastapi import APIRouter, FastAPI, Query
 from fastapi.responses import StreamingResponse
 from query_rewrite import rewrite_query
 from yandex_search import (
@@ -18,6 +18,7 @@ from yandex_search import (
 )
 
 NDJSON_MEDIA_TYPE = "application/x-ndjson"
+API_PREFIX = "/search-api"
 
 
 def _ndjson_line(payload: dict) -> str:
@@ -63,6 +64,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+router = APIRouter()
 
 
 async def _yandex_search_stream(query: str, region: str) -> AsyncIterator[str]:
@@ -197,7 +199,7 @@ async def _yandex_extended_search_stream(query: str, region: str) -> AsyncIterat
     yield _ndjson_line({"type": "done"})
 
 
-@app.get("/yandex_search")
+@router.get("/yandex_search")
 async def yandex_search(
     query: str = Query(..., min_length=1),
     region: str = Query("санкт-петербург", min_length=1),
@@ -208,7 +210,7 @@ async def yandex_search(
     )
 
 
-@app.get("/yandex_search_extended")
+@router.get("/yandex_search_extended")
 async def yandex_search_extended(
     query: str = Query(..., min_length=1),
     region: str = Query("санкт-петербург", min_length=1),
@@ -217,6 +219,9 @@ async def yandex_search_extended(
         _yandex_extended_search_stream(query, region),
         media_type=NDJSON_MEDIA_TYPE,
     )
+
+
+app.include_router(router, prefix=API_PREFIX)
 
 
 if __name__ == "__main__":

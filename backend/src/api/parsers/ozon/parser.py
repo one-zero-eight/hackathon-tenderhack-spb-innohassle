@@ -15,7 +15,7 @@ from src.api.parsers.ozon.browser import create_driverless_driver
 from src.api.parsers.ozon.exceptions import OzonAccessError
 from src.api.parsers.ozon.models import ProductResult
 from src.api.parsers.ozon.navigation import safe_get
-from src.api.parsers.wait import wait_for_css
+from src.api.parsers.wait import safe_execute_script, wait_for_css, wait_for_script_true
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +45,12 @@ class OzonSeleniumParser:
         cookies_file: str | Path | None = None,
         proxy: str | None = None,
         scroll_pause: tuple[float, float] = (0.8, 1.2),
+        fast_scroll_pause: tuple[float, float] = (0.12, 0.22),
         slow_mode: bool = False,
         page_load_timeout: int | None = None,
         element_wait_timeout: int = 45,
         page_load_retries: int = 4,
         keep_alive: bool = False,
-        session_ready: bool = False,
     ) -> None:
         self.headless = headless
         self.user_data_dir = user_data_dir
@@ -58,11 +58,15 @@ class OzonSeleniumParser:
         self.proxy = proxy
         self.slow_mode = slow_mode
         self.keep_alive = keep_alive
-        self._session_ready = session_ready
         self.page_load_timeout = page_load_timeout
         self.element_wait_timeout = element_wait_timeout
         self.page_load_retries = page_load_retries
-        self.scroll_pause = (2.0, 3.0) if slow_mode else scroll_pause
+        if slow_mode:
+            self.scroll_pause = (2.0, 3.0)
+        elif keep_alive:
+            self.scroll_pause = fast_scroll_pause
+        else:
+            self.scroll_pause = scroll_pause
         self._nav_retries = 1 if (keep_alive and not slow_mode) else (
             page_load_retries if slow_mode else min(page_load_retries, 2)
         )
@@ -106,7 +110,8 @@ class OzonSeleniumParser:
         await asyncio.sleep(random.uniform(min_sec, max_sec or min_sec))
 
     async def _is_blocked(self) -> bool:
-        body = await self._d.execute_script(
+        body = await safe_execute_script(
+            self._d,
             "return document.body ? document.body.innerText : ''",
         )
         url = (await self._d.current_url).lower()
@@ -121,6 +126,7 @@ class OzonSeleniumParser:
             page_load_timeout=self.page_load_timeout,
             retries=self._nav_retries,
             fast=not self.slow_mode,
+            wait_load=True,
         )
         if self.slow_mode:
             await self._sleep(2.0, 3.0)
@@ -151,14 +157,15 @@ class OzonSeleniumParser:
         await self._goto(f"{OZON_HOME}search/?text={quote(query)}&from_global=true")
         if not self.keep_alive:
             await self._dismiss_overlays()
+        cards_timeout = min(float(self.element_wait_timeout), 6.0 if self.keep_alive else 8.0)
         try:
-            await wait_for_css(
+            await wait_for_script_true(
                 self._d,
-                "a[href*='/product/']",
-                timeout=min(float(self.element_wait_timeout), 8.0),
-                poll_interval=0.15,
+                "return document.querySelectorAll(\"a[href*='/product/']\").length > 0;",
+                timeout=cards_timeout,
+                poll_interval=0.1,
             )
-        except (TimeoutError, NoSuchElementException):
+        except TimeoutError:
             await self._search_via_input(query)
 
     async def _search_via_input(self, query: str) -> None:
@@ -245,7 +252,7 @@ class OzonSeleniumParser:
         return out;
         """
         try:
-            result = await self._d.execute_script(script)
+            result = await safe_execute_script(self._d, script)
             return result or []
         except Exception:
             return []

@@ -8,7 +8,7 @@ from urllib.parse import quote_plus
 
 from selenium_driverless.webdriver import Chrome
 
-from src.api.parsers.wait import wait_for_css
+from src.api.parsers.wait import safe_execute_script, wait_for_script_true
 from src.api.parsers.wildberries.browser import create_driverless_driver
 from src.api.parsers.wildberries.exceptions import WildberriesAccessError
 from src.api.parsers.wildberries.navigation import safe_get
@@ -17,13 +17,15 @@ logger = logging.getLogger(__name__)
 
 WB_HOME = "https://www.wildberries.ru/"
 WB_SEARCH = "https://www.wildberries.ru/catalog/0/search.aspx?search="
-PRODUCT_CARD_SELECTOR = "article, .product-card, [data-nm-id]"
 CHALLENGE_MARKERS = ("почти готов",)
 HARD_BLOCK_MARKERS = (
     "captcha",
     "доступ ограничен",
     "подтвердите",
     "не робот",
+)
+CARDS_READY_SCRIPT = (
+    "return document.querySelectorAll('article, .product-card, [data-nm-id]').length > 0;"
 )
 WB_EXTRACT_JS = """
 const limit = arguments[0];
@@ -107,7 +109,8 @@ class WildberriesSeleniumParser:
 
     async def _page_blob(self) -> str:
         title = (await self._d.title).lower()
-        body = await self._d.execute_script(
+        body = await safe_execute_script(
+            self._d,
             "return document.body ? document.body.innerText : ''",
         )
         return f"{title} {(body or '').lower()}"
@@ -142,7 +145,20 @@ class WildberriesSeleniumParser:
             await asyncio.sleep(0.4)
         return not await self._is_challenge_page()
 
+    async def _wait_for_product_cards(self, timeout: float) -> bool:
+        try:
+            await wait_for_script_true(
+                self._d,
+                CARDS_READY_SCRIPT,
+                timeout=timeout,
+                poll_interval=0.25,
+            )
+            return True
+        except TimeoutError:
+            return False
+
     async def warmup_session(self) -> None:
+        """Прогрев: главная WB, дождаться ухода «Почти готово»."""
         challenge_timeout = max(float(self.element_wait_timeout) * 2, 20.0)
         logger.info("Wildberries session warmup")
         await safe_get(
@@ -151,6 +167,7 @@ class WildberriesSeleniumParser:
             page_load_timeout=self.page_load_timeout,
             retries=1,
             fast=True,
+            wait_load=True,
         )
         if not await self._wait_past_challenge(challenge_timeout):
             title = await self._d.title
@@ -158,77 +175,70 @@ class WildberriesSeleniumParser:
 
     async def _open_search_page(self, keyword: str, *, dest: int) -> None:
         search_url = f"{WB_SEARCH}{quote_plus(keyword)}&dest={dest}"
-        cards_timeout = min(float(self.element_wait_timeout), 12.0)
         challenge_timeout = max(float(self.element_wait_timeout) * 2, 20.0)
+        cards_timeout = min(float(self.element_wait_timeout), 12.0)
         attempts = max(self.page_load_retries, 2)
-        last_error: Exception | None = None
         last_title = ""
 
         for attempt in range(1, attempts + 1):
-            try:
-                await safe_get(
-                    self._d,
-                    search_url,
-                    page_load_timeout=self.page_load_timeout,
-                    retries=1,
-                    fast=True,
-                )
-                await self._apply_dest_cookies(dest)
-                await safe_get(
-                    self._d,
-                    search_url,
-                    page_load_timeout=self.page_load_timeout,
-                    retries=1,
-                    fast=True,
-                )
-                await asyncio.sleep(1.5)
+            await safe_get(
+                self._d,
+                search_url,
+                page_load_timeout=self.page_load_timeout,
+                retries=1,
+                fast=True,
+                wait_load=True,
+            )
+            await self._apply_dest_cookies(dest)
+            await safe_get(
+                self._d,
+                search_url,
+                page_load_timeout=self.page_load_timeout,
+                retries=1,
+                fast=True,
+                wait_load=True,
+            )
+            await asyncio.sleep(1.5)
+            last_title = await self._d.title
 
-                if await self._is_hard_blocked():
-                    last_title = await self._d.title
-                    break
+            if await self._is_hard_blocked():
+                break
 
-                if await self._is_challenge_page():
-                    logger.info(
-                        "WB challenge (title=%r), waiting up to %.0fs (attempt %d/%d)",
-                        last_title,
-                        challenge_timeout,
-                        attempt,
-                        attempts,
-                    )
-                    if not await self._wait_past_challenge(challenge_timeout):
-                        last_title = await self._d.title
-                        if attempt < attempts:
-                            await asyncio.sleep(2)
-                            continue
-                        break
-
-                await wait_for_css(
-                    self._d,
-                    PRODUCT_CARD_SELECTOR,
-                    timeout=cards_timeout,
-                    poll_interval=0.15,
-                )
-                return
-            except Exception as exc:
-                last_error = exc
-                last_title = await self._d.title
-                logger.warning(
-                    "Wildberries page load attempt %d/%d failed: %s",
+            if await self._is_challenge_page():
+                logger.info(
+                    "WB challenge (title=%r), waiting up to %.0fs (attempt %d/%d)",
+                    last_title,
+                    challenge_timeout,
                     attempt,
                     attempts,
-                    exc,
                 )
-                if attempt < attempts:
-                    await asyncio.sleep(2)
+                if not await self._wait_past_challenge(challenge_timeout):
+                    last_title = await self._d.title
+                    if attempt < attempts:
+                        await asyncio.sleep(2)
+                        continue
+                    break
+
+            if await self._wait_for_product_cards(cards_timeout):
+                return
+
+            logger.warning(
+                "WB search not ready (title=%r, attempt %d/%d)",
+                last_title,
+                attempt,
+                attempts,
+            )
+            if attempt < attempts:
+                await asyncio.sleep(2)
 
         raise WildberriesAccessError(
             f"anti-bot or empty page (title={last_title!r})",
             url=search_url,
-        ) from last_error
+        )
 
     async def _extract_products(self, limit: int, skip: int) -> list[dict]:
         need = skip + limit
-        raw = await self._d.execute_script(WB_EXTRACT_JS, need, skip)
+        raw = await safe_execute_script(self._d, WB_EXTRACT_JS, need, skip)
         if not isinstance(raw, list):
             return []
 

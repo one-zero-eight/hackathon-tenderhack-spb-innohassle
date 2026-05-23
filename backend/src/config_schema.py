@@ -46,11 +46,11 @@ class OzonSettings(BaseModel):
     "Single proxy URL, e.g. socks5://user:pass@host:port"
     proxies: list[str] = Field(default_factory=list)
     "Proxy pool; a random entry is used when proxy is not set"
-    page_load_timeout: int = 60
+    page_load_timeout: int = 20
     "Max seconds to wait for Ozon page load"
-    element_wait_timeout: int = 15
+    element_wait_timeout: int = 8
     "Max seconds to wait for search results and other DOM elements"
-    page_load_retries: int = 2
+    page_load_retries: int = 1
     "How many times to retry opening a page after timeout"
     fetch_details: bool = False
     "Open each product page to read price (slower, like CLI --details)"
@@ -79,16 +79,23 @@ class OzonSettings(BaseModel):
         return None
 
 
+class BrowserPoolSettings(BaseModel):
+    wildberries_pool_size: int = Field(2, ge=1, le=5)
+    "Number of parallel Chrome sessions for Wildberries"
+    ozon_pool_size: int = Field(2, ge=1, le=5)
+    "Number of parallel Chrome sessions for Ozon"
+
+
 class WildberriesSettings(BaseModel):
     headless: bool = True
     "Run Chrome without a visible window"
     chrome_executable_path: str | None = None
     "Path to Chrome/Chromium executable"
-    page_load_timeout: int = 25
+    page_load_timeout: int = 20
     "Max seconds to wait for Wildberries page load"
-    element_wait_timeout: int = 15
+    element_wait_timeout: int = 8
     "Max seconds to wait for product cards in search results"
-    page_load_retries: int = 2
+    page_load_retries: int = 1
     "How many times to retry opening search after anti-bot or empty page"
 
 
@@ -98,6 +105,7 @@ class Settings(BaseModel):
     auth_settings: AuthSettings
     ozon_settings: OzonSettings = Field(default_factory=OzonSettings)
     wildberries_settings: WildberriesSettings = Field(default_factory=WildberriesSettings)
+    browser_pool_settings: BrowserPoolSettings = Field(default_factory=BrowserPoolSettings)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "Settings":

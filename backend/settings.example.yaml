@@ -27,3 +27,7 @@ wildberries_settings:
   page_load_timeout: 60
   element_wait_timeout: 45
   page_load_retries: 3
+
+browser_pool_settings:
+  wildberries_pool_size: 2
+  ozon_pool_size: 2

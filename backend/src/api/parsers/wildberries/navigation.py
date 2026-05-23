@@ -9,7 +9,7 @@ from src.api.parsers.wildberries.exceptions import WildberriesAccessError
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 25
-FAST_TIMEOUT = 12
+FAST_TIMEOUT = 8
 DEFAULT_RETRIES = 2
 
 

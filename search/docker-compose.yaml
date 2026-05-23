@@ -9,8 +9,6 @@ services:
     env_file:
       - .env
     environment:
-      CLOAK_HEADLESS: "true"
-      SETTINGS_PATH: /app/settings.yaml
+      PLAYWRIGHT_HEADLESS: "true"
     volumes:
       - ./yandex_cookies.json:/app/yandex_cookies.json:ro
-      - ./settings.yaml:/app/settings.yaml:ro

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
 import random
 import sys
@@ -12,21 +11,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
-from playwright.async_api import BrowserContext, Page
+from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
-from cloak_browser import (
-    CloakSessionConfig,
-    close_cloak_session,
-    new_pool_profile_dir,
-    open_cloak_session,
-)
-from config import yandex_search_settings
-from config_schema import normalize_socks5_proxy_url
 from notify import notify_captcha
-from proxy_bridge import bridge_manager
 from query_rewrite import rewrite_query
-
-logger = logging.getLogger(__name__)
 
 YA_RU_URL = "https://ya.ru/"
 COOKIES_PATH = Path(__file__).resolve().parent.parent / "yandex_cookies.json"
@@ -39,13 +27,28 @@ PAGER_NEXT_SELECTORS = (
 )
 MAX_PAGER_CLICKS = 1
 
-def _resolve_headless() -> bool:
-    env = os.getenv("CLOAK_HEADLESS") or os.getenv("PLAYWRIGHT_HEADLESS")
-    if env is not None:
-        return env.lower() in {"1", "true", "yes"}
-    return yandex_search_settings.headless
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/122.0.0.0 Safari/537.36"
+)
 
+PROXIES = [
+    "http://qJl9qiKZnJ:TUx3MBeLrU@185.200.188.100:41403",
+    "http://yXEwruw6Sk:9zN5auC9x5@103.82.103.157:58020",
+    "http://yf3HaMfY7U:MdGUgUkVKs@103.127.77.179:62868",
+    "http://CryQV1c3lo:pjXmuWtdeh@103.82.103.17:59750",
+    "http://DvYemkIajY:uoSe6oN3RQ@45.158.198.88:40172",
+    "http://YHMI2bDrbg:jwaAI5v6IS@45.132.252.133:53570",
+    "http://m8IY2bBm6i:F1O2ykVyiu@45.154.247.22:63275",
+    "http://NaTLKpP86D:b35iXcQ25L@103.82.103.253:47798",
+    "http://Z7f0lVoTgu:jyMDFnmlqs@45.132.252.17:20890",
+    "http://Jls7tshfC7:yiESYD0iJt@193.168.224.143:51312",
+]
 
+random.shuffle(PROXIES)
+
+PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() in {"1", "true", "yes"}
 MACBOOK = os.getenv("MACBOOK", "false").lower() in {"1", "true", "yes"}
 CAPTCHA_WAIT_TIMEOUT_MS = int(os.getenv("CAPTCHA_WAIT_TIMEOUT_MS", "1800000"))
 HEADLESS_CAPTCHA_WAIT_MS = int(os.getenv("HEADLESS_CAPTCHA_WAIT_MS", "120000"))
@@ -67,23 +70,16 @@ _proxy_last_used: dict[str, float] = {}
 next_request_time: float = 0.0
 _session: YandexBrowserSession | None = None
 
-pager_speed_factor = 0.7
-scroll_speed_factor = 0.5
-type_speed_factor = 0.3
+speed_factor = 0.5
 
-PAGER_TIME_SLEEP_SECONDS = (10 * pager_speed_factor, 20 * pager_speed_factor)
-SCROLL_TARGET_DEPTH_FRACTION = (0.55 * scroll_speed_factor, 0.95 * scroll_speed_factor)
-SCROLL_BACK_UP_CHANCE = 0.12 * scroll_speed_factor
-SCROLL_BACK_UP_VIEWPORT_FRACTION = (0.05 * scroll_speed_factor, 0.2 * scroll_speed_factor)
-SCROLL_DOWN_VIEWPORT_FRACTION = (0.12 * scroll_speed_factor, 0.5 * scroll_speed_factor)
-SCROLL_STEP_PAUSE_SECONDS = (0.08 * scroll_speed_factor, 0.35 * scroll_speed_factor)
-SCROLL_LONG_PAUSE_CHANCE = 0.2 * scroll_speed_factor
-SCROLL_LONG_PAUSE_SECONDS = (0.25 * scroll_speed_factor, 0.85 * scroll_speed_factor)
-TYPE_SPACE_DELAY_MS = (int(40 * type_speed_factor), int(110 * type_speed_factor))
-TYPE_SPACE_PAUSE_SECONDS = (0.05 * type_speed_factor, 0.25 * type_speed_factor)
-TYPE_CHUNK_DELAY_MS = (int(60 * type_speed_factor), int(180 * type_speed_factor))
-TYPE_CHUNK_PAUSE_SECONDS = (0.15 * type_speed_factor, 0.55 * type_speed_factor)
-TYPE_FINISH_PAUSE_SECONDS = (1 * type_speed_factor, 2 * type_speed_factor)
+PAGER_TIME_SLEEP_SECONDS = (10 * speed_factor, 20 * speed_factor)
+SCROLL_TARGET_DEPTH_FRACTION = (0.55 * speed_factor, 0.95 * speed_factor)
+SCROLL_BACK_UP_CHANCE = 0.12 * speed_factor
+SCROLL_BACK_UP_VIEWPORT_FRACTION = (0.05 * speed_factor, 0.2 * speed_factor)
+SCROLL_DOWN_VIEWPORT_FRACTION = (0.12 * speed_factor, 0.5 * speed_factor)
+SCROLL_STEP_PAUSE_SECONDS = (0.08 * speed_factor, 0.35 * speed_factor)
+SCROLL_LONG_PAUSE_CHANCE = 0.2 * speed_factor
+SCROLL_LONG_PAUSE_SECONDS = (0.25 * speed_factor, 0.85 * speed_factor)
 
 def load_yandex_cookies(path: Path = COOKIES_PATH) -> list[dict]:
     if not path.exists():
@@ -115,25 +111,16 @@ def _pick_proxy(proxies: str | Sequence[str]) -> str:
     return proxy
 
 
-def _configured_proxies() -> list[str]:
-    pool = yandex_search_settings.proxy_pool()
-    if not pool:
-        msg = (
-            "No SOCKS5 proxies configured. Set yandex_search_settings.proxy or "
-            "yandex_search_settings.proxies in settings.yaml "
-            "(copy from settings.example.yaml)."
-        )
-        raise RuntimeError(msg)
-    return pool
-
-
-def _mask_proxy(proxy_url: str) -> str:
-    parsed = urlparse(normalize_socks5_proxy_url(proxy_url))
-    host = parsed.hostname or "?"
-    port = f":{parsed.port}" if parsed.port else ""
+def _parse_proxy(proxy_url: str) -> dict[str, str]:
+    parsed = urlparse(proxy_url)
+    config: dict[str, str] = {
+        "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
+    }
     if parsed.username:
-        return f"{parsed.scheme}://***@{host}{port}"
-    return f"{parsed.scheme}://{host}{port}"
+        config["username"] = parsed.username
+    if parsed.password:
+        config["password"] = parsed.password
+    return config
 
 
 class YandexCaptchaError(RuntimeError):
@@ -152,7 +139,7 @@ async def _is_captcha_page(page: Page) -> bool:
 
 
 def _captcha_wait_timeout_ms() -> int:
-    if MACBOOK and sys.platform == "darwin" and not _resolve_headless():
+    if MACBOOK and sys.platform == "darwin" and not PLAYWRIGHT_HEADLESS:
         return CAPTCHA_WAIT_TIMEOUT_MS
     return HEADLESS_CAPTCHA_WAIT_MS
 
@@ -169,51 +156,52 @@ class YandexBrowserSession:
     def __init__(
         self,
         cookies_path: Path = COOKIES_PATH,
-        proxies: Sequence[str] | None = None,
+        proxies: Sequence[str] = PROXIES,
     ) -> None:
         self._cookies_path = cookies_path
-        self._proxies = list(proxies) if proxies is not None else _configured_proxies()
+        self._proxies = proxies
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
         self._context: BrowserContext | None = None
-        self._bridge_upstream: str | None = None
-        self._profile_dir = new_pool_profile_dir("yandex")
-        self._home_page: Page | None = None
 
     async def start(self) -> None:
         if self._context is not None:
             return
 
-        proxy_url = normalize_socks5_proxy_url(_pick_proxy(self._proxies))
+        proxy = _parse_proxy(_pick_proxy(self._proxies))
         cookies = load_yandex_cookies(self._cookies_path)
-        logger.info("Yandex search CloakBrowser proxy: %s", _mask_proxy(proxy_url))
 
-        config = CloakSessionConfig(
-            headless=_resolve_headless(),
-            proxy=proxy_url,
-            geoip=yandex_search_settings.geoip and bool(proxy_url),
-            humanize=yandex_search_settings.humanize,
-            user_data_dir=self._profile_dir,
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(
+            headless=PLAYWRIGHT_HEADLESS,
+            proxy=proxy,
+            args=["--disable-blink-features=AutomationControlled"],
         )
-        self._context, self._home_page, self._bridge_upstream = await open_cloak_session(config)
+        self._context = await self._browser.new_context(
+            locale="ru-RU",
+            user_agent=USER_AGENT,
+            viewport={"width": 1440, "height": 900},
+        )
+        await self._context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+        )
         await self._context.add_cookies(cookies)
-        await self._home_page.goto(YA_RU_URL, wait_until="domcontentloaded", timeout=30_000)
 
     async def stop(self) -> None:
-        self._home_page = None
-        await close_cloak_session(
-            self._context,
-            keep_alive=False,
-            bridge_upstream=self._bridge_upstream,
-        )
-        self._context = None
-        self._bridge_upstream = None
+        if self._context is not None:
+            await self._context.close()
+            self._context = None
+        if self._browser is not None:
+            await self._browser.close()
+            self._browser = None
+        if self._playwright is not None:
+            await self._playwright.stop()
+            self._playwright = None
 
-    async def new_tab(self) -> Page:
+    async def _open_search_tab(self) -> Page:
         if self._context is None:
             raise RuntimeError("Browser session is not started")
         return await self._context.new_page()
-
-    async def _open_search_tab(self) -> Page:
-        return await self.new_tab()
 
     async def search(self, query: str, region: str = "санкт-петербург") -> AsyncGenerator[list[dict], None]:
         if self._context is None:
@@ -221,7 +209,6 @@ class YandexBrowserSession:
 
         rewritten_query = rewrite_query(query, region)
         page = await self._open_search_tab()
-        logger.info("Yandex search: %r (rewritten=%r)", query, rewritten_query)
         try:
             await _submit_search(page, rewritten_query)
             yield _parse_results(await _current_soup(page))
@@ -240,7 +227,7 @@ class YandexBrowserSession:
 
 async def init_browser_session(
     cookies_path: Path = COOKIES_PATH,
-    proxies: Sequence[str] | None = None,
+    proxies: Sequence[str] = PROXIES,
 ) -> YandexBrowserSession:
     global _session
     if _session is None:
@@ -254,7 +241,6 @@ async def close_browser_session() -> None:
     if _session is not None:
         await _session.stop()
         _session = None
-    await bridge_manager.shutdown_all()
 
 
 def get_browser_session() -> YandexBrowserSession:
@@ -316,19 +302,16 @@ async def _type_query_naturally(search_input, query: str) -> None:
 
     for index, chunk in enumerate(chunks):
         if index > 0:
-            await search_input.press_sequentially(
-                " ",
-                delay=random.randint(*TYPE_SPACE_DELAY_MS),
-            )
-            await _human_pause(*TYPE_SPACE_PAUSE_SECONDS)
+            await search_input.press_sequentially(" ", delay=random.randint(40, 110))
+            await _human_pause(0.05, 0.25)
         await search_input.press_sequentially(
             chunk,
-            delay=random.randint(*TYPE_CHUNK_DELAY_MS),
+            delay=random.randint(60, 180),
         )
         if index < len(chunks) - 1:
-            await _human_pause(*TYPE_CHUNK_PAUSE_SECONDS)
+            await _human_pause(0.15, 0.55)
 
-    await _human_pause(*TYPE_FINISH_PAUSE_SECONDS)
+    await _human_pause(1, 2)
 
 
 async def _scroll_page_chaotically(page: Page) -> None:
@@ -459,33 +442,26 @@ def _parse_results(soup: BeautifulSoup) -> list[dict]:
     return results
 
 
-def _hostname_shop_fields(
-    products: list[dict],
-) -> tuple[str | None, str | None, str | None]:
+def _hostname_shop_fields(products: list[dict]) -> tuple[str | None, str | None]:
     rating = None
     reviews = None
-    delivery = None
     for product in products:
         if rating is None:
             rating = product.get("rating")
         if reviews is None:
             reviews = product.get("reviews")
-        if delivery is None:
-            delivery = product.get("delivery")
-        if rating is not None and reviews is not None and delivery is not None:
+        if rating is not None and reviews is not None:
             break
-    return rating, reviews, delivery
+    return rating, reviews
 
 
 def _hostname_group(hostname: str, products: list[dict]) -> dict:
-    rating, reviews, delivery = _hostname_shop_fields(products)
+    rating, reviews = _hostname_shop_fields(products)
     group: dict = {"hostname": hostname, "products": products}
     if rating is not None:
         group["rating"] = rating
     if reviews is not None:
         group["reviews"] = reviews
-    if delivery is not None:
-        group["delivery"] = delivery
     return group
 
 

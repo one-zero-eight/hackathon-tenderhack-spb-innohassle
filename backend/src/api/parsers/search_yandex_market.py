@@ -2,10 +2,13 @@
 Yandex Market Price Search Script
 Uses httpx to fetch search page and parse embedded JSON-LD data.
 """
+import asyncio
+import contextlib
 import html as html_lib
 import json
 import logging
 import re
+import time
 from collections.abc import AsyncIterator
 from urllib.parse import urljoin
 
@@ -18,8 +21,10 @@ from src.config import yandex_market_settings
 logger = logging.getLogger(__name__)
 
 YANDEX_SEARCH_URL = "https://market.yandex.ru/search"
-YANDEX_PAGE_SIZE = 8
+# Apiary SERP usually has ~12–16 offers per page; old value (8) over-estimated page count.
+YANDEX_PAGE_SIZE = 16
 MAX_YANDEX_PAGES = 20
+YM_FETCH_CONCURRENCY = 4
 # Moscow region (market.yandex.ru ``lr`` parameter).
 YM_MOSCOW_LR = 213
 
@@ -52,6 +57,116 @@ def _build_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(**kwargs)  # type: ignore[arg-type]
 
 
+def _pages_needed(target_count: int) -> int:
+    """How many SERP pages to request over HTTP."""
+    return min(
+        MAX_YANDEX_PAGES,
+        max(1, (target_count + YANDEX_PAGE_SIZE - 1) // YANDEX_PAGE_SIZE),
+    )
+
+
+async def _fetch_search_page(
+    client: httpx.AsyncClient,
+    *,
+    query: str,
+    lr: int,
+    page: int,
+) -> str:
+    params: dict[str, object] = {"text": query, "lr": lr}
+    if page > 1:
+        params["page"] = page
+
+    retries = yandex_market_settings.request_retries
+    last_exc: BaseException | None = None
+    for attempt in range(1, retries + 1):
+        started = time.perf_counter()
+        try:
+            response = await client.get(YANDEX_SEARCH_URL, params=params)
+            response.raise_for_status()
+            logger.info(
+                "Yandex Market page %d: HTTP %d in %.2fs (%d KB)",
+                page,
+                response.status_code,
+                time.perf_counter() - started,
+                len(response.content) // 1024,
+            )
+            return response.text
+        except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPStatusError) as exc:
+            last_exc = exc
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
+                raise
+            logger.warning(
+                "Yandex Market page %d attempt %d/%d failed: %s",
+                page,
+                attempt,
+                retries,
+                exc,
+            )
+            if attempt < retries:
+                await asyncio.sleep(0.25 * attempt)
+    msg = f"Yandex Market page {page} failed after {retries} attempts"
+    raise RuntimeError(msg) from last_exc
+
+
+async def _fetch_search_pages_parallel(
+    client: httpx.AsyncClient,
+    *,
+    query: str,
+    lr: int,
+    page_numbers: list[int],
+) -> dict[int, str]:
+    if not page_numbers:
+        return {}
+
+    sem = asyncio.Semaphore(YM_FETCH_CONCURRENCY)
+
+    async def fetch_one(page: int) -> tuple[int, str | None]:
+        async with sem:
+            try:
+                html = await _fetch_search_page(client, query=query, lr=lr, page=page)
+                return page, html
+            except Exception as exc:
+                logger.warning("Yandex Market page %d fetch failed: %s", page, exc)
+                return page, None
+
+    started = time.perf_counter()
+    pairs = await asyncio.gather(*(fetch_one(page) for page in page_numbers))
+    pages = {page: html for page, html in pairs if html}
+    logger.info(
+        "Yandex Market parallel fetch: %d/%d pages in %.2fs (concurrency=%d)",
+        len(pages),
+        len(page_numbers),
+        time.perf_counter() - started,
+        YM_FETCH_CONCURRENCY,
+    )
+    return pages
+
+
+async def _load_serp_pages(
+    client: httpx.AsyncClient,
+    *,
+    query: str,
+    lr: int,
+    max_pages: int,
+) -> dict[int, str]:
+    """Load all SERP pages in parallel (bounded concurrency)."""
+    if max_pages <= 0:
+        return {}
+    if max_pages == 1:
+        return {1: await _fetch_search_page(client, query=query, lr=lr, page=1)}
+
+    return await _fetch_search_pages_parallel(
+        client,
+        query=query,
+        lr=lr,
+        page_numbers=list(range(1, max_pages + 1)),
+    )
+
+
+def _product_key(product: dict) -> str:
+    return product.get("url") or f"{product.get('name')}:{product.get('sale_price')}"
+
+
 async def parse_yandex_market_products(
     query: str,
     limit: int = 5,
@@ -71,32 +186,37 @@ async def parse_yandex_market_products(
     """
     lr = resolve_ym_region(location)
     target_count = skip + limit
-    max_pages = min(
-        MAX_YANDEX_PAGES,
-        max(1, (target_count + YANDEX_PAGE_SIZE - 1) // YANDEX_PAGE_SIZE + 2),
-    )
+    max_pages = _pages_needed(target_count)
     results: list[dict] = []
     seen_products: set[str] = set()
+    fetch_started = time.perf_counter()
 
     logger.info(
-        "Yandex Market parse start: query=%r limit=%d skip=%d lr=%d",
+        "Yandex Market parse start: query=%r limit=%d skip=%d lr=%d "
+        "(up to %d HTTP pages, parallel concurrency=%d)",
         query,
         limit,
         skip,
         lr,
+        max_pages,
+        YM_FETCH_CONCURRENCY,
     )
 
     try:
         async with _build_client() as client:
+            pages_html = await _load_serp_pages(
+                client,
+                query=query,
+                lr=lr,
+                max_pages=max_pages,
+            )
+            pages_fetched = 0
             for page in range(1, max_pages + 1):
-                params: dict[str, object] = {"text": query, "lr": lr}
-                if page > 1:
-                    params["page"] = page
-
-                response = await client.get(YANDEX_SEARCH_URL, params=params)
-                response.raise_for_status()
-
-                page_results = _parse_yandex_market_html(response.text, target_count, skip=0)
+                html = pages_html.get(page)
+                if not html:
+                    continue
+                pages_fetched += 1
+                page_results = _parse_yandex_market_html(html, target_count, skip=0)
                 if not page_results:
                     logger.info(
                         "Yandex Market: page %d returned no products, stopping",
@@ -106,15 +226,19 @@ async def parse_yandex_market_products(
 
                 previous_count = len(results)
                 for product in page_results:
-                    product_key = (
-                        product.get("url")
-                        or f"{product.get('name')}:{product.get('sale_price')}"
-                    )
-                    if product_key in seen_products:
+                    key = _product_key(product)
+                    if key in seen_products:
                         continue
-                    seen_products.add(product_key)
+                    seen_products.add(key)
                     results.append(product)
                     if len(results) >= target_count:
+                        logger.info(
+                            "Yandex Market parse done: %d items in %.2fs "
+                            "(%d pages fetched, parallel)",
+                            len(results[skip:target_count]),
+                            time.perf_counter() - fetch_started,
+                            pages_fetched,
+                        )
                         return results[skip:target_count]
 
                 if len(results) == previous_count:
@@ -124,6 +248,12 @@ async def parse_yandex_market_products(
                     )
                     break
 
+        logger.info(
+            "Yandex Market parse done: %d items in %.2fs (%d pages fetched, parallel)",
+            len(results[skip:target_count]),
+            time.perf_counter() - fetch_started,
+            pages_fetched,
+        )
         return results[skip:target_count]
     except Exception as exc:
         logger.exception("Yandex Market parse failed for %r", query)
@@ -141,51 +271,67 @@ async def iter_yandex_market_products(
     """Yield Yandex Market products page-by-page as they are parsed."""
     lr = resolve_ym_region(location)
     target_count = skip + limit
-    max_pages = min(
-        MAX_YANDEX_PAGES,
-        max(1, (target_count + YANDEX_PAGE_SIZE - 1) // YANDEX_PAGE_SIZE + 2),
-    )
+    max_pages = _pages_needed(target_count)
     seen_products: set[str] = set()
     skipped_count = 0
     emitted = 0
     new_on_page = 0
+    stream_started = time.perf_counter()
 
     logger.info(
-        "Yandex Market stream start: query=%r limit=%d skip=%d lr=%d",
+        "Yandex Market stream start: query=%r limit=%d skip=%d lr=%d "
+        "(up to %d HTTP pages, parallel concurrency=%d)",
         query,
         limit,
         skip,
         lr,
+        max_pages,
+        YM_FETCH_CONCURRENCY,
     )
 
     try:
         async with _build_client() as client:
-            for page in range(1, max_pages + 1):
-                params: dict[str, object] = {"text": query, "lr": lr}
-                if page > 1:
-                    params["page"] = page
+            rest_task: asyncio.Task[dict[int, str]] | None = None
+            if max_pages > 1:
+                rest_task = asyncio.create_task(
+                    _fetch_search_pages_parallel(
+                        client,
+                        query=query,
+                        lr=lr,
+                        page_numbers=list(range(2, max_pages + 1)),
+                    )
+                )
 
-                response = await client.get(YANDEX_SEARCH_URL, params=params)
-                response.raise_for_status()
+            pages_processed = 0
+            page_html_items: list[tuple[int, str]] = [
+                (1, await _fetch_search_page(client, query=query, lr=lr, page=1)),
+            ]
 
-                page_results = _parse_yandex_market_html(response.text, target_count, skip=0)
+            async def _cancel_rest_task() -> None:
+                if rest_task is None:
+                    return
+                rest_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await rest_task
+
+            for page, html in page_html_items:
+                pages_processed += 1
+                page_results = _parse_yandex_market_html(html, target_count, skip=0)
                 if not page_results:
                     logger.info(
                         "Yandex Market: page %d returned no products, stopping",
                         page,
                     )
+                    await _cancel_rest_task()
                     break
 
                 new_on_page = 0
                 page_batch: list[dict] = []
                 for product in page_results:
-                    product_key = (
-                        product.get("url")
-                        or f"{product.get('name')}:{product.get('sale_price')}"
-                    )
-                    if product_key in seen_products:
+                    key = _product_key(product)
+                    if key in seen_products:
                         continue
-                    seen_products.add(product_key)
+                    seen_products.add(key)
 
                     if skipped_count < skip:
                         skipped_count += 1
@@ -193,6 +339,7 @@ async def iter_yandex_market_products(
                     if emitted >= limit:
                         if page_batch:
                             yield page_batch
+                        await _cancel_rest_task()
                         return
 
                     page_batch.append(product)
@@ -203,6 +350,7 @@ async def iter_yandex_market_products(
                     yield page_batch
 
                 if emitted >= limit:
+                    await _cancel_rest_task()
                     return
 
                 if new_on_page == 0:
@@ -210,7 +358,29 @@ async def iter_yandex_market_products(
                         "Yandex Market: page %d had no new products, stopping",
                         page,
                     )
+                    await _cancel_rest_task()
                     break
+
+                if page == 1 and rest_task is not None:
+                    try:
+                        rest_pages = await rest_task
+                    except Exception:
+                        await _cancel_rest_task()
+                        raise
+                    page_html_items.extend(
+                        (p, rest_pages[p])
+                        for p in range(2, max_pages + 1)
+                        if p in rest_pages
+                    )
+
+        logger.info(
+            "Yandex Market stream done: emitted=%d limit=%d in %.2fs "
+            "(%d pages processed, parallel)",
+            emitted,
+            limit,
+            time.perf_counter() - stream_started,
+            pages_processed,
+        )
     except Exception as exc:
         logger.exception("Yandex Market stream failed for %r", query)
         raise RuntimeError(f"Failed to scrape Yandex Market: {exc}") from exc
@@ -258,7 +428,7 @@ def _parse_yandex_market_html(html: str, limit: int = 5, skip: int = 0) -> list[
                             offers.get("highPrice", offers.get("price", price))
                         ),
                         "url": url,
-                        "image_url": offer.get("image", ""),
+                        "image_url": _jsonld_image_url(offer),
                         "source": "Yandex Market",
                     })
                 if len(results) >= limit:
@@ -289,7 +459,7 @@ def _parse_yandex_market_html(html: str, limit: int = 5, skip: int = 0) -> list[
                                         "sale_price": float(price),
                                         "original_price": float(price),
                                         "url": url,
-                                        "image_url": item.get("image", ""),
+                                        "image_url": _jsonld_image_url(item),
                                         "source": "Yandex Market",
                                     })
                                 if len(results) >= limit:
@@ -298,6 +468,19 @@ def _parse_yandex_market_html(html: str, limit: int = 5, skip: int = 0) -> list[
                 pass
 
     return results[:limit]
+
+
+def _merge_picture_entities(entities: dict[str, dict[str, dict]]) -> dict[str, dict]:
+    merged: dict[str, dict] = {}
+    for entity_name in (
+        "avatars_picture",
+        "picture",
+        "mediaItem",
+        "photo",
+        "thumbnail",
+    ):
+        merged.update(entities.get(entity_name, {}))
+    return merged
 
 
 def _parse_apiary_results(html: str, limit: int, skip: int = 0) -> list[dict]:
@@ -311,7 +494,7 @@ def _parse_apiary_results(html: str, limit: int, skip: int = 0) -> list[dict]:
     offers = entities.get("offer", {})
     products = entities.get("product", {})
     vendors = entities.get("vendor", {})
-    pictures = entities.get("avatars_picture", {})
+    pictures = _merge_picture_entities(entities)
 
     visible_ids = _get_visible_entity_ids(entities)
     results = []
@@ -362,13 +545,19 @@ def _parse_apiary_results(html: str, limit: int, skip: int = 0) -> list[dict]:
         vendor_id = offer.get("vendorId") or product.get("vendorId")
         vendor = vendors.get(str(vendor_id), {})
         brand = vendor.get("name") or vendor.get("slug")
+        image_url = (
+            _extract_image_url(offer, pictures)
+            or _extract_image_url(product, pictures)
+            or _extract_image_url(product_show_place, pictures)
+            or _extract_image_url(offer_show_place, pictures)
+        )
         results.append({
             "name": _extract_title(offer) or _extract_title(product) or "N/A",
             "brand": brand if brand else None,
             "sale_price": price,
             "original_price": _extract_original_price(offer) or price,
             "url": url,
-            "image_url": _extract_image_url(offer, pictures) or _extract_image_url(product, pictures),
+            "image_url": image_url,
             "source": "Yandex Market",
         })
 
@@ -443,17 +632,105 @@ def _extract_title(item: dict) -> str | None:
     return None
 
 
-def _extract_image_url(item: dict, pictures: dict[str, dict]) -> str | None:
-    picture_ids = item.get("skuAwarePictures") or item.get("pictures") or []
-    if not isinstance(picture_ids, list):
-        return None
-    for picture_id in picture_ids:
-        if isinstance(picture_id, str) and picture_id.startswith(("http://", "https://", "//")):
-            return _absolute_yandex_url(picture_id)
-        picture = pictures.get(str(picture_id))
-        if picture and picture.get("origUrl"):
-            return _absolute_yandex_url(picture["origUrl"])
+def _jsonld_image_url(item: dict) -> str | None:
+    image = item.get("image")
+    if isinstance(image, str):
+        return _normalize_yandex_image_url(image)
+    if isinstance(image, list):
+        for entry in image:
+            if isinstance(entry, str):
+                normalized = _normalize_yandex_image_url(entry)
+                if normalized:
+                    return normalized
+            if isinstance(entry, dict):
+                normalized = _picture_url_from_entity(entry)
+                if normalized:
+                    return normalized
+    if isinstance(image, dict):
+        return _picture_url_from_entity(image)
     return None
+
+
+def _extract_image_url(item: dict, pictures: dict[str, dict]) -> str | None:
+    refs: list[object] = []
+    for key in (
+        "skuAwarePictures",
+        "pictures",
+        "picture",
+        "mainPicture",
+        "previewPicture",
+        "gallery",
+        "photos",
+        "images",
+    ):
+        value = item.get(key)
+        if value is None:
+            continue
+        if isinstance(value, list):
+            refs.extend(value)
+        else:
+            refs.append(value)
+
+    for ref in refs:
+        if isinstance(ref, str):
+            if ref.startswith(("http://", "https://", "//", "/get-")):
+                normalized = _normalize_yandex_image_url(ref)
+                if normalized:
+                    return normalized
+            picture = pictures.get(ref)
+            if picture:
+                normalized = _picture_url_from_entity(picture)
+                if normalized:
+                    return normalized
+            continue
+        if isinstance(ref, dict):
+            normalized = _picture_url_from_entity(ref)
+            if normalized:
+                return normalized
+            picture_id = ref.get("id")
+            if picture_id is not None:
+                picture = pictures.get(str(picture_id))
+                if picture:
+                    normalized = _picture_url_from_entity(picture)
+                    if normalized:
+                        return normalized
+    return None
+
+
+def _picture_url_from_entity(picture: dict) -> str | None:
+    for key in ("origUrl", "url", "src", "original"):
+        value = picture.get(key)
+        if isinstance(value, str) and value.strip():
+            return _normalize_yandex_image_url(value)
+
+    namespace = picture.get("namespace")
+    group_id = picture.get("groupId")
+    pic_key = picture.get("key")
+    if namespace and group_id is not None and pic_key:
+        ns = str(namespace)
+        if ns == "mpic":
+            ns = "get-mpic"
+        elif not ns.startswith("get-"):
+            ns = f"get-{ns}"
+        built = f"https://avatars.mds.yandex.net/{ns}/{group_id}/{pic_key}/orig"
+        return _normalize_yandex_image_url(built)
+    return None
+
+
+def _normalize_yandex_image_url(url: str) -> str | None:
+    trimmed = url.strip()
+    if not trimmed:
+        return None
+    if trimmed.startswith("//"):
+        return f"https:{trimmed}"
+    if trimmed.startswith("/get-"):
+        return f"https://avatars.mds.yandex.net{trimmed}"
+    broken = re.match(r"^https?://market\.yandex\.ru(/get-[^?#]+)", trimmed, re.IGNORECASE)
+    if broken:
+        return f"https://avatars.mds.yandex.net{broken.group(1)}"
+    if trimmed.startswith("http://") or trimmed.startswith("https://"):
+        return trimmed
+    return _absolute_yandex_url(trimmed)
 
 
 def _absolute_yandex_url(url: str) -> str:

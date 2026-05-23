@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import re
@@ -38,14 +39,16 @@ from src.api.parsers.playwright_page import (
 logger = logging.getLogger(__name__)
 
 OZON_HOME = "https://www.ozon.ru/"
-BLOCKED_MARKERS = (
-    "antibot",
-    "captcha",
+BLOCKED_URL_MARKERS = ("/challenge", "abt_", "captcha", "antibot")
+BLOCKED_TITLE_MARKERS = ("antibot challenge", "доступ ограничен", "доступ запрещен")
+BLOCKED_BODY_MARKERS = (
     "доступ ограничен",
     "доступ запрещен",
-    "подтвердите",
+    "подтвердите, что вы не робот",
+    "подтвердите — вы не бот",
     "не робот",
     "похоже, нет соединения",
+    "antibot challenge",
 )
 SERP_PRODUCTS_READY = "document.querySelectorAll(\"a[href*='/product/']\").length > 0"
 EXTRACT_LISTING_JS = """
@@ -222,6 +225,8 @@ class OzonParser:
         self._context: BrowserContext | None = None
         self._page: Page | None = None
         self._bridge_upstream: str | None = None
+        self._cookies_path: Path | None = None
+        self._cookies_session_invalid = False
 
     async def __aenter__(self) -> OzonParser:
         await self.start()
@@ -244,15 +249,20 @@ class OzonParser:
         self._context, self._page, self._bridge_upstream = await open_cloak_session(config)
         cookies_path = Path(self.cookies_file) if self.cookies_file else None
         if cookies_path and cookies_path.is_file():
+            self._cookies_path = cookies_path.resolve()
             try:
-                await apply_cookies_to_context(
+                count = await apply_cookies_to_context(
                     self._context,
                     self._page,
-                    cookies_path.resolve(),
+                    self._cookies_path,
                     page_load_timeout=int(self.page_load_timeout or 20),
                 )
+                self._cookies_session_invalid = _cookies_session_invalid(self._cookies_path)
+                _log_cookie_session_hint(self._cookies_path, count)
             except Exception as exc:
                 logger.error("Ozon cookies load failed (%s); continuing without cookies", exc)
+                self._cookies_path = None
+                self._cookies_session_invalid = True
 
     async def close(self, *, force: bool = False) -> None:
         await close_cloak_session(
@@ -273,9 +283,29 @@ class OzonParser:
     async def _sleep(self, min_sec: float, max_sec: float | None = None) -> None:
         await asyncio.sleep(random.uniform(min_sec, max_sec or min_sec))
 
-    async def _is_blocked(self) -> bool:
+    async def _block_diagnostics(self) -> tuple[bool, str]:
+        try:
+            page_url = self._p.url.lower()
+            title = (await self._p.title()).lower()
+        except Exception:
+            page_url, title = "", ""
         blob = await page_blob(self._p)
-        return any(marker in blob for marker in BLOCKED_MARKERS)
+        reasons: list[str] = []
+        if any(marker in page_url for marker in BLOCKED_URL_MARKERS):
+            reasons.append(f"url={self._p.url}")
+        if any(marker in title for marker in BLOCKED_TITLE_MARKERS):
+            reasons.append(f"title={title!r}")
+        for marker in BLOCKED_BODY_MARKERS:
+            if marker in blob:
+                reasons.append(f"body:{marker!r}")
+        if not reasons and "antibot" in title:
+            reasons.append("title:antibot")
+        detail = ", ".join(reasons) if reasons else "unknown"
+        return bool(reasons), detail
+
+    async def _is_blocked(self) -> bool:
+        blocked, _ = await self._block_diagnostics()
+        return blocked
 
     def _nav_timeout(self, *, fast: bool) -> float:
         configured = float(self.page_load_timeout or 20)
@@ -283,7 +313,39 @@ class OzonParser:
             return min(configured, 28.0 if self.keep_alive else 12.0)
         return configured
 
-    async def _goto(self, url: str, *, fast: bool | None = None) -> None:
+    async def _reload_cookies(self) -> bool:
+        if not self._cookies_path or not self._context or not self._page:
+            return False
+        try:
+            count = await apply_cookies_to_context(
+                self._context,
+                self._page,
+                self._cookies_path,
+                page_load_timeout=int(self.page_load_timeout or 20),
+            )
+            logger.info("Ozon cookies reloaded: %d from %s", count, self._cookies_path.name)
+            return True
+        except Exception as exc:
+            logger.error("Ozon cookies reload failed: %s", exc)
+            return False
+
+    async def _clear_storage_and_reload_cookies(self) -> bool:
+        try:
+            await evaluate(
+                self._p,
+                "() => { try { localStorage.clear(); sessionStorage.clear(); } catch (e) {} }",
+            )
+        except Exception:
+            pass
+        return await self._reload_cookies()
+
+    async def _goto(
+        self,
+        url: str,
+        *,
+        fast: bool | None = None,
+        cookies_retry: bool = True,
+    ) -> None:
         use_fast = self.keep_alive and not self.slow_mode if fast is None else fast
         await goto(
             self._p,
@@ -298,10 +360,52 @@ class OzonParser:
         elif not self.keep_alive:
             await self._sleep(0.3, 0.5)
         if await self._is_blocked():
+            _, block_detail = await self._block_diagnostics()
+            if self._cookies_session_invalid:
+                logger.error(
+                    "Ozon antibot at %s (%s): cookies.json has invalid session "
+                    "(__Secure-user-id missing or 0). Export cookies from a logged-in "
+                    "browser via the same proxy as ozon_settings.proxy.",
+                    url,
+                    block_detail,
+                )
+                raise OzonAccessError(
+                    "Ozon antibot: невалидные cookies (__Secure-user-id). "
+                    "Экспортируйте cookies из залогиненного браузера через тот же proxy.",
+                    url=url,
+                )
+            if cookies_retry and await self._reload_cookies():
+                logger.warning(
+                    "Ozon blocked at %s (%s) — retrying after cookie reload",
+                    url,
+                    block_detail,
+                )
+                await self._goto(url, fast=fast, cookies_retry=False)
+                return
+            if cookies_retry and await self._clear_storage_and_reload_cookies():
+                logger.warning(
+                    "Ozon blocked at %s (%s) — retrying after storage clear + cookies",
+                    url,
+                    block_detail,
+                )
+                await self._goto(url, fast=fast, cookies_retry=False)
+                return
+            logger.error("Ozon blocked at %s (%s)", url, block_detail)
             raise OzonAccessError(
-                f"Ozon ограничил доступ: {url}. Проверьте proxy/cookies (CloakBrowser).",
+                f"Ozon ограничил доступ: {url} ({block_detail}). "
+                "Проверьте proxy/cookies (CloakBrowser).",
                 url=url,
             )
+
+    async def warmup_session(self) -> None:
+        logger.info("Ozon session warmup")
+        await self._goto(OZON_HOME, fast=True, cookies_retry=False)
+        await self._dismiss_overlays()
+        if await self._is_blocked():
+            logger.warning("Ozon warmup: blocked (%s)", await self._page_context())
+            if await self._reload_cookies():
+                await self._goto(OZON_HOME, fast=True, cookies_retry=False)
+                await self._dismiss_overlays()
 
     async def _page_context(self) -> str:
         try:
@@ -351,16 +455,22 @@ class OzonParser:
         except Exception as exc:
             logger.warning("Ozon failed to set delivery city %r: %s", city, exc)
 
-    async def search(self, query: str) -> None:
-        logger.info("Поиск: %s", query)
-        search_url = f"{OZON_HOME}search/?text={quote(query)}&from_global=true"
+    async def _open_search_serp(self, search_url: str, *, fast: bool | None = None) -> None:
         cards_timeout = self._serp_wait_timeout()
+        last_timeout: TimeoutError | None = None
 
         for attempt in range(1, 3):
             logger.info("Ozon SERP load attempt %d/2", attempt)
-            await self._goto(search_url)
+            try:
+                await self._goto(search_url, fast=fast)
+            except OzonAccessError:
+                if attempt < 2 and await self._clear_storage_and_reload_cookies():
+                    continue
+                raise
             await self._dismiss_overlays()
             if await self._is_blocked():
+                if attempt < 2 and await self._clear_storage_and_reload_cookies():
+                    continue
                 raise OzonAccessError(
                     f"Ozon ограничил доступ при поиске ({await self._page_context()})",
                     url=search_url,
@@ -369,7 +479,8 @@ class OzonParser:
                 await self._wait_serp_ready(cards_timeout)
                 await self._wait_serp_settled()
                 return
-            except TimeoutError:
+            except TimeoutError as exc:
+                last_timeout = exc
                 logger.warning(
                     "Ozon SERP not ready (%s, attempt %d/2)",
                     await self._page_context(),
@@ -378,19 +489,50 @@ class OzonParser:
                 if attempt < 2:
                     await asyncio.sleep(0.4)
 
-        if not self.keep_alive:
-            await self._search_via_input(query)
-            return
-
         if await self._is_blocked():
             raise OzonAccessError(
                 f"Ozon ограничил доступ ({await self._page_context()})",
                 url=search_url,
             )
+        if last_timeout is not None:
+            raise OzonAccessError(
+                f"Ozon: товары в выдаче не появились ({await self._page_context()})",
+                url=search_url,
+            ) from last_timeout
         raise OzonAccessError(
             f"Ozon: товары в выдаче не появились ({await self._page_context()})",
             url=search_url,
         )
+
+    async def search(self, query: str) -> None:
+        logger.info("Поиск: %s", query)
+        search_url = f"{OZON_HOME}search/?text={quote(query)}&from_global=true"
+
+        # Pooled sessions: direct SERP first; first load waits for DOM (fast=commit often hits antibot shell).
+        if self.keep_alive and not self.slow_mode:
+            try:
+                await self._open_search_serp(search_url, fast=False)
+                return
+            except (OzonAccessError, TimeoutError) as exc:
+                logger.warning("Ozon direct SERP failed (%s), trying homepage input", exc)
+            try:
+                await self._search_via_input(query)
+                return
+            except (OzonAccessError, Exception) as exc:
+                logger.warning(
+                    "Ozon homepage input failed (%s), last try: direct SERP",
+                    exc,
+                )
+            await self._open_search_serp(search_url, fast=False)
+            return
+
+        try:
+            await self._open_search_serp(search_url)
+        except OzonAccessError:
+            if not self.keep_alive:
+                await self._search_via_input(query)
+                return
+            raise
 
     async def _try_fill_search_input(self, query: str) -> bool:
         filled = await evaluate(self._p, FILL_SEARCH_INPUT_JS, query)
@@ -409,12 +551,25 @@ class OzonParser:
         except Exception:
             return False
 
-    async def _search_via_input(self, query: str) -> None:
-        serp_timeout = self._serp_wait_timeout()
-        await self._goto(OZON_HOME, fast=False)
+    async def _ensure_ozon_home(self, *, fast: bool = False) -> None:
+        try:
+            if self._p.url.startswith("https://www.ozon.ru") and not await self._is_blocked():
+                await self._dismiss_overlays()
+                return
+        except Exception:
+            pass
+        await self._goto(OZON_HOME, fast=fast)
         await self._dismiss_overlays()
         if await self._is_blocked():
-            raise OzonAccessError(f"Ozon ограничил доступ ({await self._page_context()})")
+            raise OzonAccessError(
+                f"Ozon ограничил доступ ({await self._page_context()})",
+                url=OZON_HOME,
+            )
+
+    async def _search_via_input(self, query: str) -> None:
+        serp_timeout = self._serp_wait_timeout()
+        use_fast = self.keep_alive and not self.slow_mode
+        await self._ensure_ozon_home(fast=use_fast)
         if not await self._try_fill_search_input(query):
             raise OzonAccessError("Поле поиска не найдено")
         await self._sleep(0.5, 0.9)
@@ -680,6 +835,32 @@ class OzonParser:
                 await asyncio.sleep(pause)
             results.append(await self._parse_product_page(item["url"], item, pos))
         return results
+
+
+def _cookies_session_invalid(cookies_path: Path) -> bool:
+    try:
+        raw = json.loads(cookies_path.read_text(encoding="utf-8"))
+        items = raw.get("cookies", raw) if isinstance(raw, dict) else raw
+        if not isinstance(items, list):
+            return True
+        for item in items:
+            if item.get("name") == "__Secure-user-id":
+                user_id = item.get("value")
+                return user_id in (None, "", "0")
+        return True
+    except Exception:
+        return True
+
+
+def _log_cookie_session_hint(cookies_path: Path, count: int) -> None:
+    if _cookies_session_invalid(cookies_path):
+        logger.warning(
+            "Ozon cookies (%s, %d items): __Secure-user-id missing or 0 — "
+            "Ozon will show Antibot Challenge on the first request. "
+            "Export cookies from a logged-in session using the same proxy as in settings.",
+            cookies_path.name,
+            count,
+        )
 
 
 OzonSeleniumParser = OzonParser

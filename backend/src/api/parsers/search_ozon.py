@@ -62,6 +62,7 @@ async def parse_ozon_products_cold(
     async with OzonParser(
         headless=ozon_settings.headless,
         slow_mode=ozon_settings.slow,
+        humanize=ozon_settings.humanize,
         cookies_file=cookies_path,
         proxy=ozon_settings.resolve_proxy(),
         geoip=bool(ozon_settings.resolve_proxy()),

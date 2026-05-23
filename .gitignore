@@ -4,3 +4,5 @@
 .idea
 
 backend/data/*
+
+backend/cookies.json

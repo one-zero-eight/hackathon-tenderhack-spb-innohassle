@@ -251,7 +251,7 @@ function SiteTitle({ site, className }: { site: SiteResult; className?: string }
 
 function SitePriceStat({ label, value, loading = false, className }: { label?: string; value?: number | null; loading?: boolean; className?: string }) {
   return (
-    <div className={cn('shrink-0 rounded-2xl bg-white px-3.5 py-2 text-center', className)}>
+    <div className={cn('flex shrink-0 flex-col items-center justify-center rounded-2xl bg-white px-3.5 py-2', className)}>
       {label && <p className="text-gray text-[11px] font-medium tracking-wide uppercase">{label}</p>}
       {loading ? (
         <div className="mt-1 flex justify-center">

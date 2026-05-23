@@ -31,9 +31,45 @@ BLOCKED_MARKERS = (
 )
 SEARCH_INPUT_CSS = (
     'input[name="text"], '
+    'input[type="search"], '
     'input[placeholder*="Искать"], '
-    'input[placeholder*="искать"]'
+    'input[placeholder*="искать"], '
+    'input[aria-label*="Искать"], '
+    'input[aria-label*="искать"], '
+    '[data-widget="searchBar"] input, '
+    'header input[type="text"]'
 )
+SERP_PRODUCTS_READY = """
+return (
+  document.querySelectorAll("a[href*='/product/']").length > 0
+  || document.querySelectorAll(
+    "[data-widget='searchResultsV2'] [data-index], "
+    + "[data-widget='searchResults'] [data-index]"
+  ).length > 0
+);
+"""
+FILL_SEARCH_INPUT_JS = """
+const query = arguments[0];
+const selectors = [
+  'input[name="text"]',
+  'input[type="search"]',
+  '[data-widget="searchBar"] input',
+  'input[placeholder*="Искать"]',
+  'input[placeholder*="искать"]',
+  'header input[type="text"]',
+];
+for (const sel of selectors) {
+  const el = document.querySelector(sel);
+  if (!el) continue;
+  const r = el.getBoundingClientRect();
+  if (r.width < 30 || r.height < 12) continue;
+  el.focus();
+  el.value = query;
+  el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  return sel;
+}
+return null;
+"""
 
 
 class OzonSeleniumParser:
@@ -118,14 +154,15 @@ class OzonSeleniumParser:
         blob = f"{url} {(body or '').lower()}"
         return any(m in blob for m in BLOCKED_MARKERS)
 
-    async def _goto(self, url: str) -> None:
+    async def _goto(self, url: str, *, fast: bool | None = None) -> None:
+        use_fast = not self.slow_mode if fast is None else fast
         await safe_get(
             self._d,
             url,
             via_proxy=self.via_proxy,
             page_load_timeout=self.page_load_timeout,
             retries=self._nav_retries,
-            fast=not self.slow_mode,
+            fast=use_fast,
             wait_load=True,
         )
         if self.slow_mode:
@@ -137,6 +174,14 @@ class OzonSeleniumParser:
                 f"Ozon ограничил доступ: {url}. Попробуйте без --headless, --slow, меньший -n.",
                 url=url,
             )
+
+    async def warmup_session(self) -> None:
+        """Прогрев слота пула: главная + cookies/оверлеи без поискового запроса."""
+        logger.info("Ozon session warmup")
+        await self._goto(OZON_HOME, fast=False)
+        await self._dismiss_overlays()
+        if await self._is_blocked():
+            logger.warning("Ozon warmup: blocked (%s)", await self._page_context())
 
     async def _dismiss_overlays(self) -> None:
         for xpath in (
@@ -152,43 +197,108 @@ class OzonSeleniumParser:
             except Exception:
                 continue
 
+    def _serp_wait_timeout(self) -> float:
+        base = float(self.element_wait_timeout)
+        return max(base, 12.0 if self.keep_alive else 10.0)
+
+    async def _wait_serp_ready(self, timeout: float) -> None:
+        await wait_for_script_true(
+            self._d,
+            SERP_PRODUCTS_READY,
+            timeout=timeout,
+            poll_interval=0.15,
+        )
+
+    async def _page_context(self) -> str:
+        try:
+            title = await self._d.title
+            url = await self._d.current_url
+            return f"title={title!r} url={url}"
+        except Exception:
+            return "title/url unavailable"
+
     async def search(self, query: str) -> None:
         logger.info("Поиск: %s", query)
-        await self._goto(f"{OZON_HOME}search/?text={quote(query)}&from_global=true")
-        if not self.keep_alive:
-            await self._dismiss_overlays()
-        cards_timeout = min(float(self.element_wait_timeout), 6.0 if self.keep_alive else 8.0)
-        try:
-            await wait_for_script_true(
-                self._d,
-                "return document.querySelectorAll(\"a[href*='/product/']\").length > 0;",
-                timeout=cards_timeout,
-                poll_interval=0.1,
-            )
-        except TimeoutError:
-            await self._search_via_input(query)
+        search_url = f"{OZON_HOME}search/?text={quote(query)}&from_global=true"
+        cards_timeout = self._serp_wait_timeout()
+        attempts = 3 if self.keep_alive else 2
 
-    async def _search_via_input(self, query: str) -> None:
-        await self._goto(OZON_HOME)
-        await self._dismiss_overlays()
+        for attempt in range(1, attempts + 1):
+            logger.info("Ozon SERP load attempt %d/%d", attempt, attempts)
+            await self._goto(search_url, fast=False)
+            await self._dismiss_overlays()
+            if await self._is_blocked():
+                raise OzonAccessError(
+                    f"Ozon ограничил доступ при поиске ({await self._page_context()})",
+                    url=search_url,
+                )
+            try:
+                await self._wait_serp_ready(cards_timeout)
+                return
+            except TimeoutError:
+                logger.warning(
+                    "Ozon SERP not ready (%s, attempt %d/%d)",
+                    await self._page_context(),
+                    attempt,
+                    attempts,
+                )
+                if attempt < attempts:
+                    await asyncio.sleep(1.0)
+
+        await self._search_via_input(query)
+
+    async def _try_fill_search_input(self, query: str) -> bool:
+        filled_selector = await safe_execute_script(self._d, FILL_SEARCH_INPUT_JS, query)
+        if filled_selector:
+            await self._sleep(0.2, 0.4)
+            await self._d.send_keys("\n")
+            return True
         try:
             field = await wait_for_css(
                 self._d,
                 SEARCH_INPUT_CSS,
-                timeout=min(float(self.element_wait_timeout), 15.0),
+                timeout=min(float(self.element_wait_timeout), 8.0),
             )
-        except (TimeoutError, NoSuchElementException) as exc:
-            raise OzonAccessError("Поле поиска не найдено") from exc
+        except (TimeoutError, NoSuchElementException):
+            return False
         await field.clear()
         await field.send_keys(query, click_on=False)
+        return True
+
+    async def _search_via_input(self, query: str) -> None:
+        serp_timeout = self._serp_wait_timeout()
+        await self._dismiss_overlays()
+        if await self._try_fill_search_input(query):
+            await self._sleep(0.5, 0.9)
+            try:
+                await self._wait_serp_ready(serp_timeout)
+                return
+            except TimeoutError:
+                logger.warning(
+                    "Ozon SERP not ready after input on current page (%s)",
+                    await self._page_context(),
+                )
+
+        await self._goto(OZON_HOME, fast=False)
+        await self._dismiss_overlays()
+        if await self._is_blocked():
+            raise OzonAccessError(
+                f"Ozon ограничил доступ на главной ({await self._page_context()})",
+                url=OZON_HOME,
+            )
+        if not await self._try_fill_search_input(query):
+            raise OzonAccessError(
+                f"Поле поиска не найдено ({await self._page_context()})",
+            )
         await self._sleep(0.3, 0.7)
         await self._d.send_keys("\n")
         await self._sleep(0.8, 1.2)
-        await wait_for_css(
-            self._d,
-            "a[href*='/product/']",
-            timeout=min(float(self.element_wait_timeout), 10.0),
-        )
+        try:
+            await self._wait_serp_ready(serp_timeout)
+        except TimeoutError as exc:
+            raise OzonAccessError(
+                f"Товары в выдаче не появились после ввода запроса ({await self._page_context()})",
+            ) from exc
 
     async def _scroll_step(self) -> None:
         await self._d.execute_script(

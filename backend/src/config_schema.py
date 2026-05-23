@@ -86,11 +86,23 @@ class BrowserPoolSettings(BaseModel):
     "Number of parallel Chrome sessions for Ozon"
 
 
-class BrowserPoolSettings(BaseModel):
-    wildberries_pool_size: int = Field(2, ge=1, le=5)
-    "Number of parallel Chrome sessions for Wildberries"
-    ozon_pool_size: int = Field(2, ge=1, le=5)
-    "Number of parallel Chrome sessions for Ozon"
+class YandexMarketSettings(BaseModel):
+    proxy: str | None = None
+    "Single proxy URL for httpx, e.g. http://user:pass@host:port"
+    proxies: list[str] = Field(default_factory=list)
+    "Proxy pool; a random entry is used when proxy is not set"
+    timeout: int = 30
+    "httpx request timeout in seconds"
+    warmup: bool = True
+    "Open market.yandex.ru once per client to obtain cookies before search"
+
+    def resolve_proxy(self) -> str | None:
+        raw = self.proxy
+        if not raw and self.proxies:
+            raw = random.choice(self.proxies)
+        if not raw:
+            return None
+        return raw if "://" in raw else f"http://{raw}"
 
 
 class WildberriesSettings(BaseModel):
@@ -113,7 +125,7 @@ class Settings(BaseModel):
     ozon_settings: OzonSettings = Field(default_factory=OzonSettings)
     wildberries_settings: WildberriesSettings = Field(default_factory=WildberriesSettings)
     browser_pool_settings: BrowserPoolSettings = Field(default_factory=BrowserPoolSettings)
-    browser_pool_settings: BrowserPoolSettings = Field(default_factory=BrowserPoolSettings)
+    yandex_market_settings: YandexMarketSettings = Field(default_factory=YandexMarketSettings)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "Settings":

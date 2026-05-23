@@ -31,3 +31,9 @@ wildberries_settings:
 browser_pool_settings:
   wildberries_pool_size: 2
   ozon_pool_size: 2
+
+yandex_market_settings:
+  proxy: null
+  proxies: []
+  warmup: true
+  timeout: 30

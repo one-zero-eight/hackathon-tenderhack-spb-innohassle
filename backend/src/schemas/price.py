@@ -10,7 +10,7 @@ class PriceSearchRequest(BaseSchema):
     bypass_spellchecker: bool = False
     location: str | None = Field(
         default=None,
-        description="City or region for WB/Yandex regional pricing (e.g. 'Санкт-Петербург'). Defaults to Moscow.",
+        description="City or region for regional pricing on WB, Yandex Market, and Ozon. Defaults to Moscow.",
     )
 
 

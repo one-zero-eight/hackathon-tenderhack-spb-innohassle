@@ -7,6 +7,8 @@ import logging
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+from src.api.parsers.ozon.titles import is_valid_ozon_product_title
+
 logger = logging.getLogger(__name__)
 
 OZON_HOME = "https://www.ozon.ru/"
@@ -126,17 +128,18 @@ def _pick_url(obj: dict[str, Any]) -> str | None:
 
 
 def _pick_title(obj: dict[str, Any]) -> str | None:
+    candidates: list[str] = []
     for key in ("title", "name", "text", "productName"):
         value = obj.get(key)
-        if isinstance(value, str) and len(value.strip()) > 3:
-            return value.strip()[:500]
+        if isinstance(value, str) and is_valid_ozon_product_title(value):
+            candidates.append(value.strip()[:500])
     tracking = obj.get("cellTrackingInfo")
     if isinstance(tracking, dict):
         product = tracking.get("product")
         if isinstance(product, dict):
             title = product.get("title")
-            if isinstance(title, str) and title.strip():
-                return title.strip()[:500]
+            if isinstance(title, str) and is_valid_ozon_product_title(title):
+                candidates.append(title.strip()[:500])
     main = obj.get("mainState")
     if isinstance(main, list):
         for block in main:
@@ -145,9 +148,11 @@ def _pick_title(obj: dict[str, Any]) -> str | None:
             atom = block.get("atom")
             if isinstance(atom, dict):
                 text = atom.get("text")
-                if isinstance(text, str) and len(text.strip()) > 3 and "₽" not in text:
-                    return text.strip()[:500]
-    return None
+                if isinstance(text, str) and is_valid_ozon_product_title(text):
+                    candidates.append(text.strip()[:500])
+    if not candidates:
+        return None
+    return max(candidates, key=len)
 
 
 def _pick_price_text(obj: dict[str, Any]) -> str | None:

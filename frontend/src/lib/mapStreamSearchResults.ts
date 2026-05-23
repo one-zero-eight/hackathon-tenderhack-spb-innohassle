@@ -33,8 +33,14 @@ function parseRatingText(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function pickSiteMeta(products: SearchStreamProduct[]): Pick<SiteResult, 'rating' | 'reviewsLabel'> {
-  for (const product of products) {
+function pickSiteMeta(group: SearchHostnameGroup): Pick<SiteResult, 'rating' | 'reviewsLabel'> {
+  const groupRating = parseRatingText(group.rating)
+  const groupReviews = group.reviews?.trim()
+  if (groupRating != null || groupReviews) {
+    return { rating: groupRating ?? undefined, reviewsLabel: groupReviews || undefined }
+  }
+
+  for (const product of group.products) {
     if (!product.extracted) {
       const rating = parseRatingText(product.rating)
       const reviewsLabel = product.reviews?.trim()
@@ -43,6 +49,7 @@ function pickSiteMeta(products: SearchStreamProduct[]): Pick<SiteResult, 'rating
       }
     }
   }
+
   return {}
 }
 
@@ -75,7 +82,7 @@ export function mapStreamSearchResults(groups: SearchHostnameGroup[]): SiteResul
         name: group.hostname,
         kind: 'other' as const,
         products,
-        ...pickSiteMeta(group.products),
+        ...pickSiteMeta(group),
       }
     })
     .filter((site) => site.products.length > 0)

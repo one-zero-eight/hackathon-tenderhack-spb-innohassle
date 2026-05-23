@@ -38,7 +38,6 @@ const categoryTone: Record<SiteResult['kind'], string> = {
   other: 'border-gray-blue bg-gray-50 text-gray-700',
 }
 
-
 function SitesPage() {
   const { q = '', strict = false, location: locationParam } = Route.useSearch()
   const { city, setCity } = useCity()
@@ -175,11 +174,21 @@ function SitesPage() {
   )
 }
 
+function medianPrice(prices: number[]): number | null {
+  if (prices.length === 0) return null
+  const sorted = [...prices].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  if (sorted.length % 2 === 0) {
+    return Math.round((sorted[mid - 1] + sorted[mid]) / 2)
+  }
+  return sorted[mid]
+}
+
 function SiteSection({ site, query, location, external = false }: { site: SiteResult; query: string; location: string; external?: boolean }) {
   const visibleCount = useVisibleProductCount()
   const products = site.products.slice(0, visibleCount)
   const pricedProducts = site.products.filter((product) => product.price > 0)
-  const averagePrice = pricedProducts.length > 0 ? Math.round(pricedProducts.reduce((sum, product) => sum + product.price, 0) / pricedProducts.length) : null
+  const medianProductPrice = medianPrice(pricedProducts.map((product) => product.price))
 
   if (site.error && site.products.length === 0) {
     return (
@@ -213,10 +222,10 @@ function SiteSection({ site, query, location, external = false }: { site: SiteRe
           )}
           <p className="mt-1 text-sm opacity-80">{site.products.length} товаров найдено</p>
         </div>
-        {averagePrice != null && (
+        {medianProductPrice != null && (
           <div className="shrink-0 text-right text-black">
-            <p className="text-sm opacity-80">Средняя цена:</p>
-            <p className="text-lg font-semibold">~{formatPrice(averagePrice)}</p>
+            <p className="text-sm opacity-80">Медианная цена:</p>
+            <p className="text-lg font-semibold">{formatPrice(medianProductPrice)}</p>
           </div>
         )}
       </div>

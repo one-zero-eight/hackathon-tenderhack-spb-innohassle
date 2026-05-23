@@ -30,6 +30,8 @@ export type SearchStreamProduct = SearchProductSnippet | SearchProductExtracted
 export type SearchHostnameGroup = {
   hostname: string
   products: SearchStreamProduct[]
+  rating?: string | null
+  reviews?: string | null
 }
 
 export type SearchMetaEvent = {

@@ -5,7 +5,7 @@ import logging
 import random
 import re
 from pathlib import Path
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import quote
 
 from playwright.async_api import BrowserContext, Page
 
@@ -14,6 +14,12 @@ from src.api.parsers.cloak_browser import (
     close_cloak_session,
     new_pool_profile_dir,
     open_cloak_session,
+)
+from src.api.parsers.ozon.composer_extract import (
+    FETCH_COMPOSER_JS,
+    composer_items_by_url,
+    normalize_product_url,
+    parse_composer_search,
 )
 from src.api.parsers.ozon.cookies_loader import apply_cookies_to_context
 from src.api.parsers.ozon.exceptions import OzonAccessError
@@ -46,20 +52,78 @@ EXTRACT_LISTING_JS = """
     const src = img.currentSrc || img.src || img.getAttribute('data-src');
     return src && src.startsWith('http') && !src.startsWith('data:') ? src : null;
   };
+  const pickPriceText = (root) => {
+    const widgets = root.querySelectorAll(
+      '[data-widget="price"], [data-widget="webPrice"], [data-widget="sku"], [data-testid*="price"], [class*="Price"]'
+    );
+    for (const w of widgets) {
+      const t = (w.textContent || '').trim();
+      if (/\\d/.test(t) && /₽|руб/i.test(t)) return t.slice(0, 80);
+    }
+    const spans = root.querySelectorAll('span, div');
+    for (const el of spans) {
+      const t = (el.textContent || '').trim();
+      if (t.length > 32) continue;
+      if (/\\d/.test(t) && /₽|руб/i.test(t)) return t.slice(0, 80);
+    }
+    const prices = [];
+    const re = /([\\d\\s\\u00a0]{1,12})\\s*₽/g;
+    let m;
+    const blob = root.innerText || '';
+    while ((m = re.exec(blob)) !== null) prices.push(m[0].trim());
+    if (prices.length) return prices[0];
+    const digits = blob.match(/([\\d\\s\\u00a0]{3,12})/g);
+    if (digits) {
+      for (const d of digits) {
+        const n = d.replace(/\\D/g, '');
+        if (n.length >= 3 && Number(n) >= 100) return `${d.trim()} ₽`;
+      }
+    }
+    return null;
+  };
+  const pickOriginalPrice = (root) => {
+    const el = root.querySelector(
+      'del, span[class*="original"], span[class*="old-price"], span[style*="line-through"]'
+    );
+    if (!el) return null;
+    const t = (el.textContent || '').trim();
+    return /\\d/.test(t) ? t.slice(0, 80) : null;
+  };
+  const pickTitle = (a, tile) => {
+    const titled = a.getAttribute('title')?.trim();
+    if (titled && titled.length > 3 && !/₽|руб/i.test(titled)) return titled.slice(0, 500);
+    const nameEl = tile.querySelector(
+      '[class*="tsBody"][class*="500"], [class*="tile-title"], [class*="tsBody"]'
+    );
+    if (nameEl) {
+      const n = (nameEl.textContent || '').trim();
+      if (n.length > 3 && !/₽|руб/i.test(n)) return n.slice(0, 500);
+    }
+    const lines = (a.innerText || '').split('\\n').map((s) => s.trim()).filter(Boolean);
+    for (const line of lines) {
+      if (line.length > 3 && !/₽|руб/i.test(line) && !/^[\\d\\s]+$/.test(line)) return line.slice(0, 500);
+    }
+    return lines[0]?.slice(0, 500) || '';
+  };
   const out = [];
   const seen = new Set();
   for (const a of document.querySelectorAll("a[href*='/product/']")) {
     const href = a.href || a.getAttribute('href');
     if (!href || seen.has(href)) continue;
     seen.add(href);
-    const tile = a.closest('[data-index]') || a.closest('.tile-root') || a;
-    const img = tile.querySelector('img');
-    const priceEl = tile.querySelector('[class*="price"]');
+    const tile =
+      a.closest('[data-index]') ||
+      a.closest('.tile-root') ||
+      a.closest('[data-widget="searchResultsV2"] > div') ||
+      a.closest('article') ||
+      a.parentElement?.parentElement ||
+      a;
     out.push({
       href,
-      title: (a.getAttribute('title') || a.innerText || '').trim().slice(0, 500),
-      price: priceEl ? priceEl.innerText.trim().slice(0, 80) : null,
-      image: pickImage(img),
+      title: pickTitle(a, tile),
+      price: pickPriceText(tile),
+      originalPrice: pickOriginalPrice(tile),
+      image: pickImage(tile.querySelector('img')),
     });
   }
   return out;
@@ -310,13 +374,32 @@ class OzonParser:
         await self._sleep(*self.scroll_pause)
 
     def _normalize_url(self, href: str) -> str | None:
-        if "/product/" not in href:
-            return None
-        full = urljoin(OZON_HOME, href)
-        parsed = urlparse(full)
-        if "ozon.ru" not in parsed.netloc:
-            return None
-        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        return normalize_product_url(href)
+
+    async def _fetch_composer_by_url(self) -> dict[str, dict]:
+        payload = await evaluate(self._p, FETCH_COMPOSER_JS)
+        items = parse_composer_search(payload)
+        if items:
+            logger.info("Ozon composer-api: %d products", len(items))
+        return composer_items_by_url(items)
+
+    def _enrich_listing_item(self, item: dict, composer_by_url: dict[str, dict]) -> dict:
+        url = item.get("url")
+        if not url:
+            return item
+        composer = composer_by_url.get(url)
+        if not composer:
+            return item
+        merged = {**item}
+        if not merged.get("price"):
+            merged["price"] = composer.get("price")
+        if not merged.get("originalPrice"):
+            merged["originalPrice"] = composer.get("originalPrice")
+        if not merged.get("title") or merged.get("title") == "Без названия":
+            merged["title"] = composer.get("title") or merged.get("title")
+        if not merged.get("image"):
+            merged["image"] = composer.get("image")
+        return merged
 
     async def _extract_from_listing(self) -> list[dict]:
         raw = await evaluate(self._p, EXTRACT_LISTING_JS)
@@ -336,6 +419,12 @@ class OzonParser:
 
         logger.info("Прокрутка выдачи для %d товаров (до %d раундов)...", limit, max_rounds)
 
+        composer_by_url: dict[str, dict] = {}
+        try:
+            composer_by_url = await self._fetch_composer_by_url()
+        except Exception as exc:
+            logger.warning("Ozon composer-api fetch failed: %s", exc)
+
         for rnd in range(max_rounds):
             if rnd > 0 and await self._is_blocked():
                 if ordered:
@@ -348,9 +437,27 @@ class OzonParser:
                 if not url or url in seen:
                     continue
                 seen.add(url)
-                ordered.append({**item, "url": url})
+                row = self._enrich_listing_item({**item, "url": url}, composer_by_url)
+                ordered.append(row)
                 if len(ordered) >= limit:
                     return ordered[:limit]
+
+            if composer_by_url and len(ordered) < limit:
+                for url, composer in composer_by_url.items():
+                    if url in seen:
+                        continue
+                    seen.add(url)
+                    ordered.append(
+                        {
+                            "url": url,
+                            "title": composer.get("title") or "Без названия",
+                            "price": composer.get("price"),
+                            "originalPrice": composer.get("originalPrice"),
+                            "image": composer.get("image"),
+                        }
+                    )
+                    if len(ordered) >= limit:
+                        return ordered[:limit]
 
             if len(ordered) == prev_total:
                 stale += 1
@@ -458,6 +565,7 @@ class OzonParser:
                     title=i.get("title") or "Без названия",
                     url=i["url"],
                     price=i.get("price"),
+                    original_price=i.get("originalPrice"),
                     image_url=i.get("image"),
                     description=None,
                     position=pos,

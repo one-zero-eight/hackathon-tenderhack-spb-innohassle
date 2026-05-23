@@ -61,7 +61,7 @@ def _build_yandex_market_result(result: list[dict] | BaseException) -> Marketpla
         ProductPrice(
             source=source,
             name=item.get("name"),
-            brand=item.get("brand"),
+            brand=_optional_brand(item.get("brand")),
             price=float(item["sale_price"]),
             original_price=_optional_float(item.get("original_price")),
             url=_optional_str(item.get("url")),
@@ -82,11 +82,14 @@ def _build_ozon_result(result: list[dict] | BaseException) -> MarketplacePriceRe
         ProductPrice(
             source=source,
             name=item.get("name"),
+            brand=_optional_brand(item.get("brand")),
             price=_optional_float(item.get("sale_price")),
+            original_price=_optional_float(item.get("original_price")),
             url=_optional_str(item.get("url")),
             image_url=_optional_str(item.get("image_url")),
         )
         for item in result
+        if item.get("sale_price") is not None
     ]
     return MarketplacePriceResult(source=source, prices=prices)
 
@@ -100,7 +103,7 @@ def _build_wildberries_result(result: list[dict] | BaseException) -> Marketplace
         ProductPrice(
             source=source,
             name=item.get("name"),
-            brand=item.get("brand"),
+            brand=_optional_brand(item.get("brand")),
             price=float(item["sale_price"]),
             original_price=_optional_float(item.get("original_price")),
             url=_optional_str(item.get("url")),
@@ -110,6 +113,15 @@ def _build_wildberries_result(result: list[dict] | BaseException) -> Marketplace
         if item.get("sale_price") is not None
     ]
     return MarketplacePriceResult(source=source, prices=prices)
+
+
+def _optional_brand(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.upper() == "N/A":
+        return None
+    return text
 
 
 def _optional_float(value: object) -> float | None:

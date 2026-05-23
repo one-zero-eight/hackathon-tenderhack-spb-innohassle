@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from extract_products import ParsedProduct, extract_products
-from fastapi import APIRouter, FastAPI, Query
+from fastapi import FastAPI, Query
 from fastapi.responses import StreamingResponse
 from query_rewrite import rewrite_query
 from yandex_search import (
@@ -63,8 +63,7 @@ async def lifespan(_app: FastAPI):
     await close_browser_session()
 
 
-app = FastAPI(lifespan=lifespan)
-router = APIRouter()
+app = FastAPI(lifespan=lifespan, root_path=API_PREFIX)
 
 
 async def _yandex_search_stream(query: str, region: str) -> AsyncIterator[str]:
@@ -199,7 +198,7 @@ async def _yandex_extended_search_stream(query: str, region: str) -> AsyncIterat
     yield _ndjson_line({"type": "done"})
 
 
-@router.get("/yandex_search")
+@app.get("/yandex_search")
 async def yandex_search(
     query: str = Query(..., min_length=1),
     region: str = Query("санкт-петербург", min_length=1),
@@ -210,7 +209,7 @@ async def yandex_search(
     )
 
 
-@router.get("/yandex_search_extended")
+@app.get("/yandex_search_extended")
 async def yandex_search_extended(
     query: str = Query(..., min_length=1),
     region: str = Query("санкт-петербург", min_length=1),
@@ -221,10 +220,13 @@ async def yandex_search_extended(
     )
 
 
-app.include_router(router, prefix=API_PREFIX)
-
-
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=9005, reload=False)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=9005,
+        reload=False,
+        root_path=API_PREFIX,
+    )

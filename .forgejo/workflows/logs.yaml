@@ -1,0 +1,30 @@
+name: View logs
+
+on:
+    workflow_dispatch:
+        inputs:
+            service:
+                description: Service to view logs for
+                required: true
+                type: choice
+                default: all
+                options:
+                    - all
+                    - frontend
+                    - api
+                    - postgres
+
+jobs:
+    logs:
+        runs-on: deploy
+
+        steps:
+            - name: View logs
+              run: |
+                  set -eu
+                  cd /srv/apps/tenderhack-spb
+                  if [ "${{ inputs.service }}" = "all" ]; then
+                      docker compose -f prod-compose.yaml --env-file .env logs
+                  else
+                      docker compose -f prod-compose.yaml --env-file .env logs "${{ inputs.service }}"
+                  fi

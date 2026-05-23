@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from urllib.parse import quote_plus
 
 from selenium_driverless.webdriver import Chrome
@@ -27,6 +28,19 @@ HARD_BLOCK_MARKERS = (
 CARDS_READY_SCRIPT = (
     "return document.querySelectorAll('article, .product-card, [data-nm-id]').length > 0;"
 )
+WB_CARD_COUNT_SCRIPT = (
+    "return document.querySelectorAll('article, .product-card, [data-nm-id]').length;"
+)
+# Plain statements only: Selenium prepends "return", so "() => {}" becomes invalid JS.
+WB_SCROLL_JS = """
+const step = Math.max(window.innerHeight * 0.85, 800);
+const list = document.querySelector('.product-list, .catalog-page__content, main');
+if (list && list.scrollHeight > list.clientHeight + 40) {
+  list.scrollTop += step;
+} else {
+  window.scrollBy(0, step);
+}
+"""
 WB_EXTRACT_JS = """
 const limit = arguments[0];
 const skip = arguments[1];
@@ -178,6 +192,46 @@ class WildberriesSeleniumParser:
         except TimeoutError:
             return False
 
+    async def _count_product_cards(self) -> int:
+        count = await safe_execute_script(self._d, WB_CARD_COUNT_SCRIPT)
+        return int(count) if isinstance(count, int) else 0
+
+    def _scroll_rounds_for_target(self, target: int) -> int:
+        items_per_scroll = 6
+        rounds = (target + items_per_scroll - 1) // items_per_scroll + 2
+        return max(5, min(rounds, 35))
+
+    async def _scroll_to_load_cards(self, target: int) -> int:
+        """Scroll SERP until enough product cards are in the DOM (WB lazy-loads on scroll)."""
+        max_rounds = self._scroll_rounds_for_target(target)
+        stale = 0
+        prev = 0
+
+        for rnd in range(max_rounds):
+            count = await self._count_product_cards()
+            if count >= target:
+                logger.info("WB scroll: %d cards in DOM (target %d, round %d)", count, target, rnd)
+                return count
+
+            if count == prev:
+                stale += 1
+            else:
+                stale = 0
+            prev = count
+
+            if stale >= 2:
+                logger.info(
+                    "WB scroll stopped: %d cards in DOM (target %d, no new cards)",
+                    count,
+                    target,
+                )
+                break
+
+            await safe_execute_script(self._d, WB_SCROLL_JS)
+            await asyncio.sleep(random.uniform(0.45, 0.85))
+
+        return prev
+
     async def warmup_session(self) -> None:
         challenge_timeout = max(float(self.element_wait_timeout) * 2, 20.0)
         logger.info("Wildberries session warmup")
@@ -257,8 +311,7 @@ class WildberriesSeleniumParser:
         )
 
     async def _extract_products(self, limit: int, skip: int) -> list[dict]:
-        need = skip + limit
-        raw = await safe_execute_script(self._d, WB_EXTRACT_JS, need, skip)
+        raw = await safe_execute_script(self._d, WB_EXTRACT_JS, limit, skip)
         if not isinstance(raw, list):
             return []
 
@@ -295,6 +348,8 @@ class WildberriesSeleniumParser:
     ) -> list[dict]:
         logger.info("Wildberries search: %r (dest=%d)", keyword, dest)
         await self._open_search_page(keyword, dest=dest)
+        target_cards = skip + limit
+        await self._scroll_to_load_cards(target_cards)
         products = await self._extract_products(limit, skip)
         logger.info(
             "Wildberries parse done for %r (limit=%d): %d items",

@@ -64,6 +64,6 @@ async def apply_cookies_to_context(
         retries=2,
     )
     await context.add_cookies(cookies)
-    await page.reload(wait_until="commit", timeout=int(page_load_timeout * 1000))
+    await page.reload(wait_until="domcontentloaded", timeout=int(page_load_timeout * 1000))
     logger.info("Ozon cookies applied: %d from %s", len(cookies), cookies_path.name)
     return len(cookies)

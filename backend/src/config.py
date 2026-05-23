@@ -5,6 +5,7 @@ from src.config_schema import (
     ApiSettings,
     AuthSettings,
     BrowserPoolSettings,
+    OllamaSettings,
     OzonSettings,
     Settings,
     WildberriesSettings,
@@ -20,4 +21,5 @@ ozon_settings: OzonSettings = settings.ozon_settings
 wildberries_settings: WildberriesSettings = settings.wildberries_settings
 browser_pool_settings: BrowserPoolSettings = settings.browser_pool_settings
 yandex_market_settings: YandexMarketSettings = settings.yandex_market_settings
+ollama_settings: OllamaSettings = settings.ollama_settings
 settings_dir: Path | None = settings_path_obj.parent if settings_path_obj.is_file() else None

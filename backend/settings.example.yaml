@@ -38,3 +38,9 @@ yandex_market_settings:
   warmup: true
   timeout: 30
   request_retries: 3
+
+ollama_settings:
+  host: "http://ollama:11434"
+  model: "granite4.1:8b"
+  batch_size: 5
+  timeout: 60

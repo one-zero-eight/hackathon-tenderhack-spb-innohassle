@@ -1,7 +1,7 @@
 from typing import Literal
 
-from src.schemas.pydantic_base import BaseSchema
 from src.schemas.price import ProductPrice
+from src.schemas.pydantic_base import BaseSchema
 
 
 class PriceSearchMetaEvent(BaseSchema):

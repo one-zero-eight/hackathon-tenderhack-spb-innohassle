@@ -49,9 +49,18 @@ services:
         environment:
             POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
 
+    ollama:
+        image: ollama/ollama:latest
+        restart: always
+        ports:
+            - "127.0.0.1:11434:11434"
+        volumes:
+            - ollama:/root/.ollama
+
 volumes:
     caddy_data:
     postgres:
+    ollama:
 
 
 configs:
@@ -62,6 +71,11 @@ configs:
                 db_url: "postgresql+asyncpg://postgres:postgres@postgres:5432/postgres"
                 secret_key: ${SECRET_KEY:-meow}
                 token_expiration_in_minutes: 60
+
+            ollama_settings:
+                host: "http://ollama:11434"
+                model: "granite4.1:8b"
+                batch_size: 5
 
             auth_settings:
                 access_token_ttl_minutes: 60

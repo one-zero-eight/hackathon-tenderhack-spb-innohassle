@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from fastapi_derive_responses import AutoDeriveResponsesAPIRoute
 
 from src.api.parsers import iter_ozon_products, iter_wildberries_products, iter_yandex_market_products
+from src.api.parsers.relevance_filter import filter_relevant
 from src.api.parsers.spellcheck import spellcheck
 from src.schemas import PriceSearchRequest, ProductPrice
 
@@ -67,6 +68,8 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
                 payload.skip,
                 location=payload.location,
             ):
+                if not payload.bypass_relevance_filter:
+                    batch = await filter_relevant(query, batch)
                 prices = _products_from_raw(YANDEX_SOURCE, batch)
                 if prices:
                     await queue.put(
@@ -90,6 +93,8 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
                 payload.skip,
                 location=payload.location,
             ):
+                if not payload.bypass_relevance_filter:
+                    batch = await filter_relevant(query, batch)
                 prices = _products_from_raw(WILDBERRIES_SOURCE, batch)
                 if prices:
                     await queue.put(
@@ -113,6 +118,8 @@ async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str
                 payload.skip,
                 location=payload.location,
             ):
+                if not payload.bypass_relevance_filter:
+                    batch = await filter_relevant(query, batch)
                 prices = _products_from_raw(OZON_SOURCE, batch)
                 if prices:
                     await queue.put(

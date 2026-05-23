@@ -8,6 +8,7 @@ class PriceSearchRequest(BaseSchema):
     limit: int = Field(default=5, ge=1, le=100)
     skip: int = Field(default=0, ge=0)
     bypass_spellchecker: bool = False
+    bypass_relevance_filter: bool = False
     location: str | None = Field(
         default=None,
         description="City or region for regional pricing on WB, Yandex Market, and Ozon. Defaults to Moscow.",

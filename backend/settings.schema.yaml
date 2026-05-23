@@ -64,11 +64,44 @@ $defs:
         type: integer
     title: BrowserPoolSettings
     type: object
+  OllamaSettings:
+    properties:
+      host:
+        default: http://ollama:11434
+        examples:
+        - http://ollama:11434
+        - http://localhost:11434
+        title: Host
+        type: string
+      model:
+        default: granite4.1:8b
+        title: Model
+        type: string
+      batch_size:
+        default: 5
+        maximum: 20
+        minimum: 1
+        title: Batch Size
+        type: integer
+      timeout:
+        default: 60
+        title: Timeout
+        type: integer
+    title: OllamaSettings
+    type: object
   OzonSettings:
     properties:
       headless:
         default: true
         title: Headless
+        type: boolean
+      geoip:
+        default: true
+        title: Geoip
+        type: boolean
+      humanize:
+        default: false
+        title: Humanize
         type: boolean
       slow:
         default: false
@@ -121,6 +154,17 @@ $defs:
         - type: 'null'
         default: null
         title: Chrome Executable Path
+      proxy:
+        anyOf:
+        - type: string
+        - type: 'null'
+        default: null
+        title: Proxy
+      proxies:
+        items:
+          type: string
+        title: Proxies
+        type: array
       page_load_timeout:
         default: 20
         title: Page Load Timeout
@@ -152,6 +196,10 @@ $defs:
         default: 30
         title: Timeout
         type: integer
+      connect_timeout:
+        default: 6
+        title: Connect Timeout
+        type: integer
       request_retries:
         default: 3
         maximum: 6
@@ -177,6 +225,8 @@ properties:
     $ref: '#/$defs/BrowserPoolSettings'
   yandex_market_settings:
     $ref: '#/$defs/YandexMarketSettings'
+  ollama_settings:
+    $ref: '#/$defs/OllamaSettings'
 required:
 - api_settings
 - auth_settings

@@ -102,6 +102,20 @@ class BrowserPoolSettings(BaseModel):
     "Number of parallel Chrome sessions for Ozon"
 
 
+class OllamaSettings(BaseModel):
+    host: str = Field(
+        default="http://ollama:11434",
+        examples=["http://ollama:11434", "http://localhost:11434"],
+    )
+    "Base URL of the local Ollama server"
+    model: str = Field(default="granite4.1:8b")
+    "Model to use for relevance filtering"
+    batch_size: int = Field(default=5, ge=1, le=20)
+    "Products sent in a single LLM call. Keep small for compact models."
+    timeout: int = Field(default=60)
+    "Seconds before an Ollama request is considered timed out"
+
+
 class WildberriesSettings(BaseModel):
     headless: bool = True
     "Run Chrome without a visible window"
@@ -159,6 +173,7 @@ class Settings(BaseModel):
     wildberries_settings: WildberriesSettings = Field(default_factory=WildberriesSettings)
     browser_pool_settings: BrowserPoolSettings = Field(default_factory=BrowserPoolSettings)
     yandex_market_settings: YandexMarketSettings = Field(default_factory=YandexMarketSettings)
+    ollama_settings: OllamaSettings = Field(default_factory=OllamaSettings)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "Settings":

@@ -86,6 +86,13 @@ class BrowserPoolSettings(BaseModel):
     "Number of parallel Chrome sessions for Ozon"
 
 
+class BrowserPoolSettings(BaseModel):
+    wildberries_pool_size: int = Field(2, ge=1, le=5)
+    "Number of parallel Chrome sessions for Wildberries"
+    ozon_pool_size: int = Field(2, ge=1, le=5)
+    "Number of parallel Chrome sessions for Ozon"
+
+
 class WildberriesSettings(BaseModel):
     headless: bool = True
     "Run Chrome without a visible window"
@@ -105,6 +112,7 @@ class Settings(BaseModel):
     auth_settings: AuthSettings
     ozon_settings: OzonSettings = Field(default_factory=OzonSettings)
     wildberries_settings: WildberriesSettings = Field(default_factory=WildberriesSettings)
+    browser_pool_settings: BrowserPoolSettings = Field(default_factory=BrowserPoolSettings)
     browser_pool_settings: BrowserPoolSettings = Field(default_factory=BrowserPoolSettings)
 
     @classmethod

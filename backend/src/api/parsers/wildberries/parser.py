@@ -158,7 +158,6 @@ class WildberriesSeleniumParser:
             return False
 
     async def warmup_session(self) -> None:
-        """Прогрев: главная WB, дождаться ухода «Почти готово»."""
         challenge_timeout = max(float(self.element_wait_timeout) * 2, 20.0)
         logger.info("Wildberries session warmup")
         await safe_get(

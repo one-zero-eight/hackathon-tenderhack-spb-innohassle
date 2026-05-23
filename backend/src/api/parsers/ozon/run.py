@@ -10,21 +10,19 @@ logger = logging.getLogger(__name__)
 
 async def run_ozon_search(parser: OzonSeleniumParser, query: str, limit: int) -> list[dict]:
     fetch_details = ozon_settings.fetch_details
-    parser_limit = limit
-    batch_size = max(1, (parser_limit - 1) // 2) if parser_limit > 1 else 1
+    batch_size = max(1, (limit - 1) // 2) if limit > 1 else 1
 
     logger.info(
-        "Ozon parse start: query=%r limit=%d parser_limit=%d fetch_details=%s",
+        "Ozon parse start: query=%r limit=%d fetch_details=%s",
         query,
         limit,
-        parser_limit,
         fetch_details,
     )
 
     try:
         raw_results = await parser.run(
             query,
-            parser_limit,
+            limit,
             fetch_details=fetch_details,
             batch_size=batch_size,
         )

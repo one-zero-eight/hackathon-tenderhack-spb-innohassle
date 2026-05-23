@@ -9,20 +9,10 @@ from src.schemas import MarketplacePriceResult, PriceSearchRequest, PriceSearchR
 router = APIRouter(prefix="/prices", tags=["Prices"], route_class=AutoDeriveResponsesAPIRoute)
 
 
-async def _run_browser_parsers(query: str, limit: int) -> tuple[list[dict] | BaseException, list[dict] | BaseException]:
-    """Run Selenium parsers one after another — two Chromes at once are slow and unstable."""
-    results: list[list[dict] | BaseException] = []
-    for parser in (parse_wildberries_products, parse_ozon_products):
-        try:
-            results.append(await parser(query, limit))
-        except BaseException as exc:
-            results.append(exc)
-    return results[0], results[1]
-
-
 @router.post("/search")
 async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
     yandex_result, wildberries_result, ozon_result = await asyncio.gather(
+<<<<<<< HEAD
         parse_yandex_market_products(
             payload.query,
             payload.limit,
@@ -35,6 +25,10 @@ async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
             payload.skip,
             payload.location,
         ),
+=======
+        parse_yandex_market_products(payload.query, payload.limit),
+        parse_wildberries_products(payload.query, payload.limit),
+>>>>>>> 05f8198 (fix)
         parse_ozon_products(payload.query, payload.limit),
         return_exceptions=True,
     )

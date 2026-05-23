@@ -84,11 +84,11 @@ class WildberriesSettings(BaseModel):
     "Run Chrome without a visible window"
     chrome_executable_path: str | None = None
     "Path to Chrome/Chromium executable"
-    page_load_timeout: int = 60
+    page_load_timeout: int = 25
     "Max seconds to wait for Wildberries page load"
-    element_wait_timeout: int = 45
+    element_wait_timeout: int = 15
     "Max seconds to wait for product cards in search results"
-    page_load_retries: int = 3
+    page_load_retries: int = 2
     "How many times to retry opening search after anti-bot or empty page"
 
 

@@ -74,7 +74,7 @@ async def create_driverless_driver(
     )
 
     if via_proxy:
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
 
     await warmup_ozon_session(
         driver,

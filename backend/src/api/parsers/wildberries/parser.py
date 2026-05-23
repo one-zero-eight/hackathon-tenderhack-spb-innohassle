@@ -10,6 +10,7 @@ from selenium_driverless.types.by import By
 from selenium_driverless.types.webelement import NoSuchElementException, WebElement
 from selenium_driverless.webdriver import Chrome
 
+from src.api.parsers.wait import wait_for_css
 from src.api.parsers.wildberries.browser import create_driverless_driver
 from src.api.parsers.wildberries.exceptions import WildberriesAccessError
 from src.api.parsers.wildberries.navigation import safe_get
@@ -89,6 +90,7 @@ class WildberriesSeleniumParser:
     async def _open_search_page(self, keyword: str, *, dest: int) -> None:
         search_url = f"{WB_SEARCH}{quote_plus(keyword)}&dest={dest}"
         last_error: Exception | None = None
+        cards_timeout = min(float(self.element_wait_timeout), 15.0)
 
         for attempt in range(1, self.page_load_retries + 1):
             try:
@@ -105,12 +107,12 @@ class WildberriesSeleniumParser:
                     page_load_timeout=self.page_load_timeout,
                     retries=1,
                 )
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
 
                 cards = await self._d.find_elements(
                     By.CSS_SELECTOR,
                     PRODUCT_CARD_SELECTOR,
-                    timeout=5,
+                    timeout=3,
                 )
                 if await self._is_blocked() or not cards:
                     title = await self._d.title
@@ -119,10 +121,10 @@ class WildberriesSeleniumParser:
                         url=search_url,
                     )
 
-                await self._d.find_element(
-                    By.CSS_SELECTOR,
+                await wait_for_css(
+                    self._d,
                     PRODUCT_CARD_SELECTOR,
-                    timeout=self.element_wait_timeout,
+                    timeout=cards_timeout,
                 )
                 return
             except Exception as exc:
@@ -134,7 +136,7 @@ class WildberriesSeleniumParser:
                     exc,
                 )
                 if attempt < self.page_load_retries:
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(1)
 
         raise WildberriesAccessError(
             f"Failed to open Wildberries search page: {last_error}",
@@ -209,7 +211,7 @@ class WildberriesSeleniumParser:
     async def _find_attribute(self, card: WebElement, selector: str, attribute: str) -> str | None:
         try:
             element = await card.find_element(By.CSS_SELECTOR, selector, timeout=2)
-        except (NoSuchElementException, TimeoutError):
+        except (TimeoutError, NoSuchElementException):
             return None
         return _clean_text(await element.get_attribute(attribute))
 

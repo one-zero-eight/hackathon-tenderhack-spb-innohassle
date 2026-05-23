@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from selenium_driverless.webdriver import Chrome
@@ -9,8 +8,8 @@ from src.api.parsers.wildberries.exceptions import WildberriesAccessError
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT = 60
-DEFAULT_RETRIES = 3
+DEFAULT_TIMEOUT = 25
+DEFAULT_RETRIES = 2
 
 
 async def safe_get(
@@ -27,7 +26,7 @@ async def safe_get(
         try:
             await driver.get(url, wait_load=True, timeout=timeout)
             return
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             last_exc = exc
             await _stop_loading(driver)
             logger.warning(

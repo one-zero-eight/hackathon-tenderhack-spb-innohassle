@@ -15,6 +15,7 @@ from src.api.parsers.ozon.browser import create_driverless_driver
 from src.api.parsers.ozon.exceptions import OzonAccessError
 from src.api.parsers.ozon.models import ProductResult
 from src.api.parsers.ozon.navigation import safe_get
+from src.api.parsers.wait import wait_for_css
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,10 @@ class OzonSeleniumParser:
             page_load_timeout=self.page_load_timeout,
             retries=self.page_load_retries,
         )
-        await self._sleep(4.0, 6.0 if self.via_proxy else 4.0)
+        if self.slow_mode or self.via_proxy:
+            await self._sleep(4.0, 6.0)
+        else:
+            await self._sleep(1.0, 2.0)
         if await self._is_blocked():
             raise OzonAccessError(
                 f"Ozon ограничил доступ: {url}. Попробуйте без --headless, --slow, меньший -n.",
@@ -139,10 +143,10 @@ class OzonSeleniumParser:
         await self._goto(f"{OZON_HOME}search/?text={quote(query)}&from_global=true")
         await self._dismiss_overlays()
         try:
-            await self._d.find_element(
-                By.CSS_SELECTOR,
+            await wait_for_css(
+                self._d,
                 "a[href*='/product/']",
-                timeout=self.element_wait_timeout,
+                timeout=min(float(self.element_wait_timeout), 15.0),
             )
         except (TimeoutError, NoSuchElementException):
             await self._search_via_input(query)
@@ -151,10 +155,10 @@ class OzonSeleniumParser:
         await self._goto(OZON_HOME)
         await self._dismiss_overlays()
         try:
-            field = await self._d.find_element(
-                By.CSS_SELECTOR,
+            field = await wait_for_css(
+                self._d,
                 SEARCH_INPUT_CSS,
-                timeout=self.element_wait_timeout,
+                timeout=min(float(self.element_wait_timeout), 15.0),
             )
         except (TimeoutError, NoSuchElementException) as exc:
             raise OzonAccessError("Поле поиска не найдено") from exc
@@ -163,10 +167,10 @@ class OzonSeleniumParser:
         await self._sleep(0.3, 0.7)
         await self._d.send_keys("\n")
         await self._sleep(2, 3)
-        await self._d.find_element(
-            By.CSS_SELECTOR,
+        await wait_for_css(
+            self._d,
             "a[href*='/product/']",
-            timeout=self.element_wait_timeout,
+            timeout=min(float(self.element_wait_timeout), 15.0),
         )
 
     async def _scroll_step(self) -> None:

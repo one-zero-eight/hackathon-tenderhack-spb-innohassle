@@ -59,7 +59,10 @@ class OzonSettings(BaseModel):
             raw = random.choice(self.proxies)
         if not raw:
             return None
-        return raw if "://" in raw else f"http://{raw}"
+        value = raw.strip()
+        if "://" not in value:
+            return f"socks5://{value}"
+        return value
 
     def resolve_cookies_path(self, *, settings_dir: Path | None = None) -> Path | None:
         if not self.cookies_file:

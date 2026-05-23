@@ -2,13 +2,13 @@ import logging
 import re
 
 from src.api.parsers.ozon.exceptions import OzonAccessError
-from src.api.parsers.ozon.parser import OzonSeleniumParser
+from src.api.parsers.ozon.parser import OzonParser
 from src.config import ozon_settings
 
 logger = logging.getLogger(__name__)
 
 
-async def run_ozon_search(parser: OzonSeleniumParser, query: str, limit: int) -> list[dict]:
+async def run_ozon_search(parser: OzonParser, query: str, limit: int) -> list[dict]:
     fetch_details = ozon_settings.fetch_details
     batch_size = max(1, (limit - 1) // 2) if limit > 1 else 1
 

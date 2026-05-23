@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
-from selenium_driverless.webdriver import Chrome
+from playwright.async_api import BrowserContext, Page
 
-from src.api.parsers.ozon.navigation import safe_get
+from src.api.parsers.playwright_page import goto
+
+logger = logging.getLogger(__name__)
+
+OZON_HOME = "https://www.ozon.ru/"
 
 
 def load_cookies_file(path: Path) -> list[dict]:
@@ -35,55 +40,30 @@ def load_cookies_file(path: Path) -> list[dict]:
             entry["httpOnly"] = True
         same_site = item.get("sameSite")
         if same_site and str(same_site).lower() not in ("null", "none", ""):
-            s = str(same_site).capitalize()
-            if s in ("Lax", "Strict", "None"):
-                entry["sameSite"] = s
+            normalized = str(same_site).capitalize()
+            if normalized in ("Lax", "Strict", "None"):
+                entry["sameSite"] = normalized
         cookies.append(entry)
     return cookies
 
 
-async def apply_cookies(
-    driver: Chrome,
+async def apply_cookies_to_context(
+    context: BrowserContext,
+    page: Page,
     cookies_path: Path,
     *,
-    base_url: str = "https://www.ozon.ru",
-    via_proxy: bool = False,
-    page_load_timeout: int | None = None,
-    page_load_retries: int = 2,
-    reload: bool = True,
+    page_load_timeout: int = 20,
 ) -> int:
-    """Загружает cookies в браузер (сначала открывает домен)."""
+    """Load cookies.json into a CloakBrowser context (domain must be opened first)."""
     cookies = load_cookies_file(cookies_path)
-    await safe_get(
-        driver,
-        base_url,
-        via_proxy=via_proxy,
-        page_load_timeout=page_load_timeout,
-        retries=page_load_retries,
-        fast=True,
+    await goto(
+        page,
+        OZON_HOME,
+        timeout_sec=float(page_load_timeout),
+        wait_until="commit",
+        retries=2,
     )
-    added = 0
-    for cookie in cookies:
-        try:
-            await driver.add_cookie(cookie)
-            added += 1
-        except Exception:
-            continue
-    if reload:
-        await driver.refresh()
-    return added
-
-
-def resolve_cookies_path(path: Path | None) -> Path | None:
-    if path is None:
-        return None
-    if path.is_absolute() and path.exists():
-        return path
-    candidates = [
-        path,
-        Path.cwd() / path,
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate.resolve()
-    return path
+    await context.add_cookies(cookies)
+    await page.reload(wait_until="commit", timeout=int(page_load_timeout * 1000))
+    logger.info("Ozon cookies applied: %d from %s", len(cookies), cookies_path.name)
+    return len(cookies)

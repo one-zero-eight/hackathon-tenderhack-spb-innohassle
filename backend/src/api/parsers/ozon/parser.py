@@ -7,15 +7,24 @@ import re
 from pathlib import Path
 from urllib.parse import quote, urljoin, urlparse
 
-from selenium_driverless.types.by import By
-from selenium_driverless.types.webelement import NoSuchElementException
-from selenium_driverless.webdriver import Chrome
+from playwright.async_api import BrowserContext, Page
 
-from src.api.parsers.ozon.browser import create_driverless_driver
+from src.api.parsers.cloak_browser import (
+    CloakSessionConfig,
+    close_cloak_session,
+    new_pool_profile_dir,
+    open_cloak_session,
+)
+from src.api.parsers.ozon.cookies_loader import apply_cookies_to_context
 from src.api.parsers.ozon.exceptions import OzonAccessError
 from src.api.parsers.ozon.models import ProductResult
-from src.api.parsers.ozon.navigation import safe_get
-from src.api.parsers.wait import safe_execute_script, wait_for_css, wait_for_script_true
+from src.api.parsers.playwright_page import (
+    dismiss_buttons,
+    evaluate,
+    goto,
+    page_blob,
+    wait_for_function,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,141 +38,176 @@ BLOCKED_MARKERS = (
     "не робот",
     "похоже, нет соединения",
 )
-SEARCH_INPUT_CSS = (
-    'input[name="text"], '
-    'input[type="search"], '
-    'input[placeholder*="Искать"], '
-    'input[placeholder*="искать"], '
-    'input[aria-label*="Искать"], '
-    'input[aria-label*="искать"], '
-    '[data-widget="searchBar"] input, '
-    'header input[type="text"]'
-)
-SERP_PRODUCTS_READY = """
-return (
-  document.querySelectorAll("a[href*='/product/']").length > 0
-  || document.querySelectorAll(
-    "[data-widget='searchResultsV2'] [data-index], "
-    + "[data-widget='searchResults'] [data-index]"
-  ).length > 0
-);
+SERP_PRODUCTS_READY = "document.querySelectorAll(\"a[href*='/product/']\").length > 0"
+EXTRACT_LISTING_JS = """
+() => {
+  const pickImage = (img) => {
+    if (!img) return null;
+    const src = img.currentSrc || img.src || img.getAttribute('data-src');
+    return src && src.startsWith('http') && !src.startsWith('data:') ? src : null;
+  };
+  const out = [];
+  const seen = new Set();
+  for (const a of document.querySelectorAll("a[href*='/product/']")) {
+    const href = a.href || a.getAttribute('href');
+    if (!href || seen.has(href)) continue;
+    seen.add(href);
+    const tile = a.closest('[data-index]') || a.closest('.tile-root') || a;
+    const img = tile.querySelector('img');
+    const priceEl = tile.querySelector('[class*="price"]');
+    out.push({
+      href,
+      title: (a.getAttribute('title') || a.innerText || '').trim().slice(0, 500),
+      price: priceEl ? priceEl.innerText.trim().slice(0, 80) : null,
+      image: pickImage(img),
+    });
+  }
+  return out;
+}
 """
 FILL_SEARCH_INPUT_JS = """
-const query = arguments[0];
-const selectors = [
-  'input[name="text"]',
-  'input[type="search"]',
-  '[data-widget="searchBar"] input',
-  'input[placeholder*="Искать"]',
-  'input[placeholder*="искать"]',
-  'header input[type="text"]',
-];
-for (const sel of selectors) {
-  const el = document.querySelector(sel);
-  if (!el) continue;
-  const r = el.getBoundingClientRect();
-  if (r.width < 30 || r.height < 12) continue;
-  el.focus();
-  el.value = query;
-  el.dispatchEvent(new InputEvent("input", { bubbles: true }));
-  return sel;
+(query) => {
+  const input = document.querySelector(
+    'input[name="text"], input[type="search"], [data-widget="searchBar"] input'
+  );
+  if (!input) return false;
+  input.focus();
+  input.value = query;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
 }
-return null;
+"""
+SCROLL_STEP_JS = """
+() => {
+  const step = Math.max(window.innerHeight * 0.85, 700);
+  const boxes = document.querySelectorAll(
+    "[data-widget='searchResultsV2'], [data-widget='infiniteVirtualPaginator'], [data-widget='searchResults']"
+  );
+  for (const el of boxes) {
+    if (el.scrollHeight > el.clientHeight + 40) {
+      el.scrollTop += step;
+      return;
+    }
+  }
+  window.scrollBy(0, step);
+}
 """
 
 
-class OzonSeleniumParser:
+class OzonParser:
+    """Async Ozon parser on CloakBrowser (stealth Chromium + Playwright API)."""
+
     def __init__(
         self,
         *,
-        headless: bool = False,
-        user_data_dir: str | None = None,
+        headless: bool = True,
         cookies_file: str | Path | None = None,
         proxy: str | None = None,
+        geoip: bool = True,
+        humanize: bool = False,
         scroll_pause: tuple[float, float] = (0.8, 1.2),
-        fast_scroll_pause: tuple[float, float] = (0.12, 0.22),
         slow_mode: bool = False,
         page_load_timeout: int | None = None,
         element_wait_timeout: int = 45,
         page_load_retries: int = 4,
         keep_alive: bool = False,
+        profile_dir: Path | None = None,
     ) -> None:
         self.headless = headless
-        self.user_data_dir = user_data_dir
         self.cookies_file = cookies_file
         self.proxy = proxy
+        self.geoip = geoip
+        self.humanize = humanize
         self.slow_mode = slow_mode
         self.keep_alive = keep_alive
         self.page_load_timeout = page_load_timeout
         self.element_wait_timeout = element_wait_timeout
         self.page_load_retries = page_load_retries
+        self._profile_dir = profile_dir
         if slow_mode:
             self.scroll_pause = (2.0, 3.0)
         elif keep_alive:
             self.scroll_pause = (0.2, 0.35)
         else:
             self.scroll_pause = scroll_pause
-        self._nav_retries = 1 if (keep_alive and not slow_mode) else (
-            page_load_retries if slow_mode else min(page_load_retries, 2)
-        )
-        self.driver: Chrome | None = None
-        self.user_agent: str | None = None
-        self.via_proxy: bool = False
+        if keep_alive and not slow_mode:
+            self._nav_retries = max(page_load_retries, 2)
+        elif slow_mode:
+            self._nav_retries = page_load_retries
+        else:
+            self._nav_retries = min(page_load_retries, 2)
+        self._context: BrowserContext | None = None
+        self._page: Page | None = None
+        self._bridge_upstream: str | None = None
 
-    async def __aenter__(self) -> OzonSeleniumParser:
+    async def __aenter__(self) -> OzonParser:
         await self.start()
         return self
 
     async def __aexit__(self, *args: object) -> None:
-        await self.close()
+        await self.close(force=True)
 
     async def start(self) -> None:
-        self.driver, self.user_agent, self.via_proxy = await create_driverless_driver(
+        profile = self._profile_dir
+        if self.keep_alive and profile is None:
+            profile = new_pool_profile_dir("ozon")
+        config = CloakSessionConfig(
             headless=self.headless,
-            user_data_dir=self.user_data_dir,
-            cookies_file=self.cookies_file,
-            slow_mode=self.slow_mode,
             proxy=self.proxy,
-            page_load_timeout=self.page_load_timeout,
-            element_wait_timeout=self.element_wait_timeout,
-            page_load_retries=self.page_load_retries,
+            geoip=self.geoip and bool(self.proxy),
+            humanize=self.humanize,
+            user_data_dir=profile if self.keep_alive else None,
         )
+        self._context, self._page, self._bridge_upstream = await open_cloak_session(config)
+        cookies_path = Path(self.cookies_file) if self.cookies_file else None
+        if cookies_path and cookies_path.is_file():
+            try:
+                await apply_cookies_to_context(
+                    self._context,
+                    self._page,
+                    cookies_path.resolve(),
+                    page_load_timeout=int(self.page_load_timeout or 20),
+                )
+            except Exception as exc:
+                logger.error("Ozon cookies load failed (%s); continuing without cookies", exc)
 
-    async def close(self) -> None:
-        if self.keep_alive:
-            return
-        if self.driver:
-            await self.driver.quit()
-            self.driver = None
+    async def close(self, *, force: bool = False) -> None:
+        await close_cloak_session(
+            self._context,
+            keep_alive=self.keep_alive and not force,
+            bridge_upstream=self._bridge_upstream if force or not self.keep_alive else None,
+        )
+        self._context = None
+        self._page = None
+        self._bridge_upstream = None
 
     @property
-    def _d(self) -> Chrome:
-        if not self.driver:
-            raise RuntimeError("Driver is not running")
-        return self.driver
+    def _p(self) -> Page:
+        if not self._page:
+            raise RuntimeError("CloakBrowser page is not started")
+        return self._page
 
     async def _sleep(self, min_sec: float, max_sec: float | None = None) -> None:
         await asyncio.sleep(random.uniform(min_sec, max_sec or min_sec))
 
     async def _is_blocked(self) -> bool:
-        body = await safe_execute_script(
-            self._d,
-            "return document.body ? document.body.innerText : ''",
-        )
-        url = (await self._d.current_url).lower()
-        blob = f"{url} {(body or '').lower()}"
-        return any(m in blob for m in BLOCKED_MARKERS)
+        blob = await page_blob(self._p)
+        return any(marker in blob for marker in BLOCKED_MARKERS)
+
+    def _nav_timeout(self, *, fast: bool) -> float:
+        configured = float(self.page_load_timeout or 20)
+        if fast:
+            return min(configured, 28.0 if self.keep_alive else 12.0)
+        return configured
 
     async def _goto(self, url: str, *, fast: bool | None = None) -> None:
-        use_fast = not self.slow_mode if fast is None else fast
-        await safe_get(
-            self._d,
+        use_fast = self.keep_alive and not self.slow_mode if fast is None else fast
+        await goto(
+            self._p,
             url,
-            via_proxy=self.via_proxy,
-            page_load_timeout=self.page_load_timeout,
+            timeout_sec=self._nav_timeout(fast=use_fast),
+            wait_until="commit" if use_fast else "domcontentloaded",
             retries=self._nav_retries,
-            fast=use_fast,
-            wait_load=True,
         )
         if self.slow_mode:
             await self._sleep(2.0, 3.0)
@@ -171,65 +215,40 @@ class OzonSeleniumParser:
             await self._sleep(0.3, 0.5)
         if await self._is_blocked():
             raise OzonAccessError(
-                f"Ozon restricted access: {url}. Try without --headless, with --slow, or a smaller -n.",
+                f"Ozon ограничил доступ: {url}. Проверьте proxy/cookies (CloakBrowser).",
                 url=url,
             )
 
-    async def warmup_session(self) -> None:
-        """Прогрев слота пула: главная + cookies/оверлеи без поискового запроса."""
-        logger.info("Ozon session warmup")
-        await self._goto(OZON_HOME, fast=False)
-        await self._dismiss_overlays()
-        if await self._is_blocked():
-            logger.warning("Ozon warmup: blocked (%s)", await self._page_context())
-
-    async def _dismiss_overlays(self) -> None:
-        for xpath in (
-            "//button[contains(.,'OK')]",
-            "//button[contains(.,'Понятно')]",
-            "//button[contains(.,'Принять')]",
-        ):
-            try:
-                btn = await self._d.find_element(By.XPATH, xpath, timeout=2)
-                if await btn.is_visible():
-                    await btn.click()
-                    await self._sleep(0.3, 0.6)
-            except Exception:
-                continue
-
-    def _serp_wait_timeout(self) -> float:
-        base = float(self.element_wait_timeout)
-        return max(base, 12.0 if self.keep_alive else 10.0)
-
-    async def _wait_serp_ready(self, timeout: float) -> None:
-        await wait_for_script_true(
-            self._d,
-            SERP_PRODUCTS_READY,
-            timeout=timeout,
-            poll_interval=0.15,
-        )
-
     async def _page_context(self) -> str:
         try:
-            title = await self._d.title
-            url = await self._d.current_url
-            return f"title={title!r} url={url}"
+            return f"title={await self._p.title()!r} url={self._p.url}"
         except Exception:
             return "title/url unavailable"
 
+    async def _dismiss_overlays(self) -> None:
+        await dismiss_buttons(self._p, ("OK", "Понятно", "Принять"))
+
+    def _serp_wait_timeout(self) -> float:
+        base = float(self.element_wait_timeout)
+        if self.keep_alive:
+            return min(max(base, 10.0), 15.0)
+        return min(max(base, 10.0), 15.0)
+
+    async def _wait_serp_ready(self, timeout: float) -> None:
+        await wait_for_function(self._p, SERP_PRODUCTS_READY, timeout_sec=timeout, poll_interval_sec=0.15)
+
     async def search(self, query: str) -> None:
-        logger.info("Search: %s", query)
+        logger.info("Поиск: %s", query)
         search_url = f"{OZON_HOME}search/?text={quote(query)}&from_global=true"
         cards_timeout = self._serp_wait_timeout()
-        attempts = 3 if self.keep_alive else 2
 
-        for attempt in range(1, attempts + 1):
-            logger.info("Ozon SERP load attempt %d/%d", attempt, attempts)
-            await self._goto(search_url, fast=False)
+        for attempt in range(1, 3):
+            logger.info("Ozon SERP load attempt %d/2", attempt)
+            await self._goto(search_url)
             await self._dismiss_overlays()
             if await self._is_blocked():
                 raise OzonAccessError(
-                    f"Ozon restricted access during search ({await self._page_context()})",
+                    f"Ozon ограничил доступ при поиске ({await self._page_context()})",
                     url=search_url,
                 )
             try:
@@ -237,94 +256,57 @@ class OzonSeleniumParser:
                 return
             except TimeoutError:
                 logger.warning(
-                    "Ozon SERP not ready (%s, attempt %d/%d)",
+                    "Ozon SERP not ready (%s, attempt %d/2)",
                     await self._page_context(),
                     attempt,
-                    attempts,
                 )
-                if attempt < attempts:
-                    await asyncio.sleep(1.0)
+                if attempt < 2:
+                    await asyncio.sleep(0.4)
 
-        await self._search_via_input(query)
+        if not self.keep_alive:
+            await self._search_via_input(query)
+            return
+
+        if await self._is_blocked():
+            raise OzonAccessError(
+                f"Ozon ограничил доступ ({await self._page_context()})",
+                url=search_url,
+            )
+        raise OzonAccessError(
+            f"Ozon: товары в выдаче не появились ({await self._page_context()})",
+            url=search_url,
+        )
 
     async def _try_fill_search_input(self, query: str) -> bool:
-        filled_selector = await safe_execute_script(self._d, FILL_SEARCH_INPUT_JS, query)
-        if filled_selector:
+        filled = await evaluate(self._p, FILL_SEARCH_INPUT_JS, query)
+        if filled:
             await self._sleep(0.2, 0.4)
-            await self._d.send_keys("\n")
+            await self._p.keyboard.press("Enter")
             return True
         try:
-            field = await wait_for_css(
-                self._d,
-                SEARCH_INPUT_CSS,
-                timeout=min(float(self.element_wait_timeout), 8.0),
-            )
-        except (TimeoutError, NoSuchElementException):
+            field = self._p.locator(
+                'input[name="text"], input[type="search"], [data-widget="searchBar"] input'
+            ).first
+            await field.wait_for(state="visible", timeout=int(min(self.element_wait_timeout, 8) * 1000))
+            await field.fill(query)
+            await self._p.keyboard.press("Enter")
+            return True
+        except Exception:
             return False
-        await field.clear()
-        await field.send_keys(query, click_on=False)
-        return True
 
     async def _search_via_input(self, query: str) -> None:
         serp_timeout = self._serp_wait_timeout()
-        await self._dismiss_overlays()
-        if await self._try_fill_search_input(query):
-            await self._sleep(0.5, 0.9)
-            try:
-                await self._wait_serp_ready(serp_timeout)
-                return
-            except TimeoutError:
-                logger.warning(
-                    "Ozon SERP not ready after input on current page (%s)",
-                    await self._page_context(),
-                )
-
         await self._goto(OZON_HOME, fast=False)
         await self._dismiss_overlays()
         if await self._is_blocked():
-            raise OzonAccessError(
-                f"Ozon restricted access on the home page ({await self._page_context()})",
-                url=OZON_HOME,
-            )
+            raise OzonAccessError(f"Ozon ограничил доступ ({await self._page_context()})")
         if not await self._try_fill_search_input(query):
-            raise OzonAccessError(
-                f"Search field not found ({await self._page_context()})",
-            )
-        await self._sleep(0.3, 0.7)
-        await self._d.send_keys("\n")
-        await self._sleep(0.8, 1.2)
-        try:
-            await self._wait_serp_ready(serp_timeout)
-        except TimeoutError as exc:
-            raise OzonAccessError(
-                f"Products did not appear in search results after entering the query ({await self._page_context()})",
-            ) from exc
+            raise OzonAccessError("Поле поиска не найдено")
+        await self._sleep(0.5, 0.9)
+        await self._wait_serp_ready(serp_timeout)
 
     async def _scroll_step(self) -> None:
-        await self._d.execute_script(
-            """
-            const step = Math.max(window.innerHeight * 0.85, 700);
-            const boxes = document.querySelectorAll(
-              "[data-widget='searchResultsV2'], [data-widget='infiniteVirtualPaginator'], [data-widget='searchResults']"
-            );
-            for (const el of boxes) {
-              if (el.scrollHeight > el.clientHeight + 40) {
-                el.scrollTop += step;
-                return;
-              }
-            }
-            window.scrollBy(0, step);
-            """
-        )
-        links = await self._d.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
-        if links:
-            try:
-                await self._d.execute_script(
-                    "arguments[0].scrollIntoView({block: 'center'});",
-                    links[-1],
-                )
-            except Exception:
-                pass
+        await evaluate(self._p, SCROLL_STEP_JS)
         await self._sleep(*self.scroll_pause)
 
     def _normalize_url(self, href: str) -> str | None:
@@ -337,38 +319,10 @@ class OzonSeleniumParser:
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
     async def _extract_from_listing(self) -> list[dict]:
-        script = """
-        const pickImage = (img) => {
-          if (!img) return null;
-          const src = img.currentSrc || img.src || img.getAttribute('data-src');
-          return src && src.startsWith('http') && !src.startsWith('data:') ? src : null;
-        };
-        const out = [];
-        const seen = new Set();
-        for (const a of document.querySelectorAll('a[href*="/product/"]')) {
-          const href = a.href || a.getAttribute('href');
-          if (!href || seen.has(href)) continue;
-          seen.add(href);
-          const tile = a.closest('[data-index]') || a.closest('.tile-root') || a;
-          const img = tile.querySelector('img');
-          const priceEl = tile.querySelector('[class*="price"]');
-          out.push({
-            href,
-            title: (a.getAttribute('title') || a.innerText || '').trim().slice(0, 500),
-            price: priceEl ? priceEl.innerText.trim().slice(0, 80) : null,
-            image: pickImage(img),
-          });
-        }
-        return out;
-        """
-        try:
-            result = await safe_execute_script(self._d, script)
-            return result or []
-        except Exception:
-            return []
+        raw = await evaluate(self._p, EXTRACT_LISTING_JS)
+        return raw if isinstance(raw, list) else []
 
     def _scroll_rounds_for_limit(self, limit: int) -> int:
-        """Ozon virtual list отдаёт ~6–10 карточек за прокрутку — rounds должны расти с limit."""
         items_per_scroll = 8
         rounds = (limit + items_per_scroll - 1) // items_per_scroll + 2
         return max(3, min(rounds, 30))
@@ -380,14 +334,14 @@ class OzonSeleniumParser:
         prev_total = 0
         max_rounds = self._scroll_rounds_for_limit(limit)
 
-        logger.info("Scrolling search results for %d products (up to %d rounds)...", limit, max_rounds)
+        logger.info("Прокрутка выдачи для %d товаров (до %d раундов)...", limit, max_rounds)
 
-        for _rnd in range(max_rounds):
-            if _rnd > 0 and await self._is_blocked():
+        for rnd in range(max_rounds):
+            if rnd > 0 and await self._is_blocked():
                 if ordered:
-                    logger.warning("Blocked after %d products", len(ordered))
+                    logger.warning("Блокировка после %d товаров", len(ordered))
                     break
-                raise OzonAccessError("Blocked while loading search results")
+                raise OzonAccessError("Блокировка при загрузке выдачи")
 
             for item in await self._extract_from_listing():
                 url = self._normalize_url(item.get("href", ""))
@@ -405,73 +359,76 @@ class OzonSeleniumParser:
             prev_total = len(ordered)
 
             if stale >= 1:
-                await self._d.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                await evaluate(self._p, "() => window.scrollTo(0, document.body.scrollHeight)")
                 await self._sleep(0.4, 0.6)
                 stale = 0
                 continue
 
-            if _rnd + 1 < max_rounds:
+            if rnd + 1 < max_rounds:
                 await self._scroll_step()
 
         return ordered[:limit]
 
     async def _parse_product_page(self, url: str, listing: dict, position: int) -> ProductResult:
-        logger.info("[%d] Product page: %s", position, url)
+        logger.info("[%d] Карточка: %s", position, url)
         title = listing.get("title") or "Без названия"
         price = listing.get("price")
         image = listing.get("image")
         description = None
 
         try:
-            await self._goto(url)
-            try:
-                h1 = await self._d.find_element(By.CSS_SELECTOR, "h1", timeout=self.element_wait_timeout)
-                title = ((await h1.text) or title).strip()
-            except (TimeoutError, NoSuchElementException):
-                pass
+            await self._goto(url, fast=False)
+            title = await evaluate(
+                self._p,
+                "() => { const h = document.querySelector('h1'); return h ? h.innerText.trim() : null; }",
+            ) or title
 
-            for sel in ("[data-widget='webPrice']", "span[class*='price']"):
-                try:
-                    el = await self._d.find_element(By.CSS_SELECTOR, sel, timeout=5)
-                    text = await el.text
-                    if text and re.search(r"\d", text):
-                        price = re.sub(r"\s+", " ", text.strip())
-                        break
-                except Exception:
-                    continue
+            price_text = await evaluate(
+                self._p,
+                """
+                () => {
+                  for (const sel of ["[data-widget='webPrice']", "span[class*='price']"]) {
+                    const el = document.querySelector(sel);
+                    if (el && /\\d/.test(el.innerText)) return el.innerText.trim();
+                  }
+                  return null;
+                }
+                """,
+            )
+            if price_text:
+                price = re.sub(r"\s+", " ", str(price_text))
 
-            for sel in (
-                "[data-widget='webDescription']",
-                "meta[property='og:image']",
-                "img[src*='ir.ozone.ru']",
-            ):
-                try:
-                    el = await self._d.find_element(By.CSS_SELECTOR, sel, timeout=5)
-                    if sel.startswith("meta"):
-                        image = (await el.get_attribute("content")) or image
-                    elif "Description" in sel:
-                        text = await el.text
-                        if len(text) > 30:
-                            description = text.strip()
-                    else:
-                        image = (await el.get_attribute("src")) or image
-                except Exception:
-                    continue
+            image = await evaluate(
+                self._p,
+                """
+                () => {
+                  const og = document.querySelector("meta[property='og:image']");
+                  if (og && og.content) return og.content;
+                  const img = document.querySelector("img[src*='ir.ozone.ru']");
+                  return img ? (img.src || img.getAttribute('src')) : null;
+                }
+                """,
+            ) or image
 
-            if not description:
-                try:
-                    meta = await self._d.find_element(By.CSS_SELECTOR, 'meta[name="description"]', timeout=5)
-                    description = await meta.get_attribute("content")
-                except Exception:
-                    pass
+            description = await evaluate(
+                self._p,
+                """
+                () => {
+                  const el = document.querySelector("[data-widget='webDescription']");
+                  if (el && el.innerText.length > 30) return el.innerText.trim();
+                  const meta = document.querySelector('meta[name="description"]');
+                  return meta ? meta.content : null;
+                }
+                """,
+            )
 
         except OzonAccessError:
             raise
         except Exception as exc:
-            logger.warning("Product page error %s: %s", url, exc)
+            logger.warning("Ошибка карточки %s: %s", url, exc)
 
         return ProductResult(
-            title=title,
+            title=str(title),
             url=url,
             price=price,
             image_url=image,
@@ -488,12 +445,12 @@ class OzonSeleniumParser:
         batch_size: int = 4,
     ) -> list[ProductResult]:
         if fetch_details and limit <= batch_size * 2:
-            raise ValueError(f"Requires n > 2*m: n={limit}, m={batch_size}")
+            raise ValueError(f"Требуется n > 2*m: n={limit}, m={batch_size}")
 
         await self.search(query)
         listing_items = await self.collect_products(limit)
         if not listing_items:
-            raise OzonAccessError("No products found in search results")
+            raise OzonAccessError("Товары в выдаче не найдены")
 
         if not fetch_details:
             return [
@@ -513,7 +470,10 @@ class OzonSeleniumParser:
             await asyncio.sleep(random.uniform(0.05, 0.1))
             if pos > 1 and (pos - 1) % batch_size == 0:
                 pause = random.uniform(5, 10)
-                logger.info("Pause after %d products: %.1f s", batch_size, pause)
+                logger.info("Пауза после %d товаров: %.1f с", batch_size, pause)
                 await asyncio.sleep(pause)
             results.append(await self._parse_product_page(item["url"], item, pos))
         return results
+
+
+OzonSeleniumParser = OzonParser

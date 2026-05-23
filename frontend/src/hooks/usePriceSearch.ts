@@ -98,10 +98,10 @@ export function useSiteFromSearch(siteSlug: string, params: PriceSearchParams): 
 export function useProductFromSearch(siteSlug: string, productId: string, params: PriceSearchParams) {
   const queryClient = useQueryClient()
   const site = useSiteFromSearch(siteSlug, params)
-  const cached = findProductInPriceSearchCache(queryClient, siteSlug, params.location)
-  const resolvedSite = site ?? cached
-  if (!resolvedSite) return null
-  const product = resolvedSite.products.find((item) => item.id === productId)
+  const cached = findProductInPriceSearchCache(queryClient, siteSlug, productId, params.location)
+  if (cached) return cached
+  if (!site) return null
+  const product = site.products.find((item) => item.id === productId)
   if (!product) return null
-  return { site: resolvedSite, product }
+  return { site, product }
 }

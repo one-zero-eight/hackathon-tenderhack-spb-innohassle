@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -24,6 +25,10 @@ CHROME_EXECUTABLE_CANDIDATES = (
 
 
 def _resolve_chrome_executable_path() -> str | None:
+    env_path = os.environ.get("CHROME_EXECUTABLE_PATH", "").strip()
+    if env_path and Path(env_path).is_file():
+        return env_path
+
     configured = wildberries_settings.chrome_executable_path
     if configured and Path(configured).is_file():
         return configured
@@ -59,15 +64,20 @@ def _build_chrome_options(*, headless: bool) -> tuple[webdriver.ChromeOptions, s
     else:
         options.add_argument("--start-maximized")
 
-    chrome_executable_path = _resolve_chrome_executable_path()
-    if chrome_executable_path:
-        options.binary_location = chrome_executable_path
-
     return options, user_agent
 
 
 async def create_driverless_driver(*, headless: bool = True) -> tuple[Chrome, str]:
+    chrome_executable_path = _resolve_chrome_executable_path()
+    if not chrome_executable_path:
+        raise RuntimeError(
+            "Chrome/Chromium not found for Wildberries. "
+            "Install chromium in the image (Docker) or set wildberries_settings.chrome_executable_path "
+            "or CHROME_EXECUTABLE_PATH.",
+        )
+
     options, user_agent = _build_chrome_options(headless=headless)
+    options.binary_location = chrome_executable_path
     driver = webdriver.Chrome(options=options)
     await driver.start_session()
     logger.info("Wildberries Chrome + selenium-driverless (headless=%s)", headless)

@@ -29,6 +29,7 @@ async def parse_yandex_market_products(query: str, limit: int = 5, skip: int = 0
                   Defaults to Moscow when omitted.
     """
     lr = resolve_ym_region(location, api_settings.nominatim_url)
+    logger.info(f"Resolved Yandex Market region for location '{location}': lr={lr}")
     return await asyncio.to_thread(_parse_yandex_market_products_sync, query, limit, skip, lr)
 
 
@@ -53,33 +54,46 @@ def _parse_yandex_market_products_sync(query: str, limit: int = 5, skip: int = 0
     results = []
     seen_products = set()
 
-    with requests.Session() as session:
-        for page in range(1, max_pages + 1):
-            params: dict[str, object] = {"text": query, "lr": lr}
-            if page > 1:
-                params["page"] = page
+    logger.info(f"Searching Yandex Market for: '{query}' (lr={lr}, limit={limit}, skip={skip})")
+    try:
+        with requests.Session() as session:
+            for page in range(1, max_pages + 1):
+                params: dict[str, object] = {"text": query, "lr": lr}
+                if page > 1:
+                    params["page"] = page
 
-            response = session.get("https://market.yandex.ru/search", params=params, headers=headers, timeout=15)
-            response.raise_for_status()
+                logger.info(f"Fetching Yandex Market search page {page}/{max_pages} for: '{query}' (lr={lr})")
+                response = session.get("https://market.yandex.ru/search", params=params, headers=headers, timeout=15)
+                response.raise_for_status()
 
-            page_results = _parse_yandex_market_page(response.text, target_count)
-            if not page_results:
-                break
+                page_results = _parse_yandex_market_page(response.text, target_count)
+                logger.info(f"Parsed {len(page_results)} Yandex Market products from page {page}")
+                if not page_results:
+                    logger.info(f"Stopping Yandex Market search for '{query}': page {page} returned no products")
+                    break
 
-            previous_count = len(results)
-            for product in page_results:
-                product_key = product.get("url") or f"{product.get('name')}:{product.get('sale_price')}"
-                if product_key in seen_products:
-                    continue
-                seen_products.add(product_key)
-                results.append(product)
-                if len(results) >= target_count:
-                    return results[skip:target_count]
+                previous_count = len(results)
+                for product in page_results:
+                    product_key = product.get("url") or f"{product.get('name')}:{product.get('sale_price')}"
+                    if product_key in seen_products:
+                        continue
+                    seen_products.add(product_key)
+                    results.append(product)
+                    if len(results) >= target_count:
+                        products = results[skip:target_count]
+                        logger.info(f"Collected {len(products)} Yandex Market products for: '{query}'")
+                        return products
 
-            if len(results) == previous_count:
-                break
+                if len(results) == previous_count:
+                    logger.info(f"Stopping Yandex Market search for '{query}': page {page} had no new unique products")
+                    break
 
-    return results[skip:target_count]
+        products = results[skip:target_count]
+        logger.info(f"Collected {len(products)} Yandex Market products for: '{query}'")
+        return products
+    except Exception as e:
+        logger.exception(f"Failed to scrape Yandex Market for: '{query}'")
+        raise RuntimeError(f"Failed to scrape Yandex Market: {e}") from e
 
 
 def _parse_yandex_market_page(html: str, limit: int) -> list[dict]:

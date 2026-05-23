@@ -75,6 +75,7 @@ configs:
             ollama_settings:
                 host: "http://ollama:11434"
                 model: "granite4.1:8b"
+                concurrency: 4
                 batch_size: 5
 
             auth_settings:

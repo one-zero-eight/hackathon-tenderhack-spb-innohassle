@@ -116,6 +116,8 @@ class OllamaSettings(BaseModel):
     "Model to use for relevance filtering"
     batch_size: int = Field(default=5, ge=1, le=20)
     "Products sent in a single LLM call. Keep small for compact models."
+    concurrency: int = Field(default=4, ge=1, le=32)
+    "Max number of simultaneous batch requests sent to Ollama."
     timeout: int = Field(default=60)
     "Seconds before an Ollama request is considered timed out"
 

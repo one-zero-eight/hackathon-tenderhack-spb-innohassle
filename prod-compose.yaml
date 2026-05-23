@@ -60,7 +60,8 @@ configs:
             ollama_settings:
                 host: "http://ollama:11434"
                 model: "granite4.1:8b"
-                batch_size: 10
+                concurrency: 4
+                batch_size: 5
 
             auth_settings:
                 access_token_ttl_minutes: 60

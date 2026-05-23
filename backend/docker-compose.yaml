@@ -36,6 +36,8 @@ services:
     restart: always
     ports:
       - "11434:11434"
+    environment:
+      - OLLAMA_NUM_PARALLEL=4
     volumes:
       - ollama:/root/.ollama
 

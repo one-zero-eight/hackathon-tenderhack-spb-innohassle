@@ -10,6 +10,7 @@ the input without truncation or quality degradation.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated
 
@@ -21,31 +22,63 @@ from src.config import ollama_settings
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-Ты — поисковый специалист. Пользователь вводит запрос в поисковую строку \
-маркетплейса, маркетплейс предлагает несколько товаров.
+Ты — строгий поисковый фильтр для маркетплейсов.
+Твоя задача: для каждого товара из списка решить, соответствует ли он запросу пользователя.
 
-Оцени каждый товар: релевантен ли он запросу пользователя.
-Товар считается релевантным, если выполнены ВСЕ три условия:
-  1. Тип товара совпадает со смыслом запроса (семантическое совпадение).
-  2. Производитель (бренд) совпадает — регистр может отличаться.
-  3. Модель совпадает точно — учитывай цифры, буквы, индексы.
+ПРАВИЛА (применяй все строго):
 
-Если в запросе не указан бренд или модель, оценивай только по совпадающим критериям.
+1. ТОЧНОЕ совпадение модели.
+   Если запрос содержит конкретный номер/индекс модели — все цифры и буквы \
+должны совпадать ДОСЛОВНО.
+   Примеры отклонения: запрос «Q5» → «Q5 HE», «Q5 Max» — НЕ совпадают (другой суффикс).
+   Запрос «Keychron Q5» → «Keychron V5», «Keychron Q1» — НЕ совпадают (другая серия).
+   Запрос «Samsung A54» → «Samsung A56», «Samsung A36» — НЕ совпадают (другая цифра).
+   Если запрос «Q5 Max», то «Q5 HE» — НЕ совпадает; «Q5 Max» — совпадает.
+
+2. ТОЧНОЕ совпадение бренда.
+   Если в запросе указан бренд — бренд товара должен совпадать (регистр игнорируется).
+   Пример: запрос «Keychron Q5» → товар бренда INOI или без бренда — НЕ совпадает.
+
+3. ТОЛЬКО сам товар, НЕ аксессуары.
+   Отклоняй чехлы, плёнки, стёкла, кабели, подставки и прочие аксессуары,
+   даже если они упоминают нужную модель в названии.
+   Пример: «Защитное стекло для Samsung A54» — ОТКЛОНИТЬ.
+   Пример: «Чехол на Keychron Q5» — ОТКЛОНИТЬ.
+
+4. Если запрос не содержит бренд или модель — оценивай только по типу товара.
+
+Для каждого товара: сначала укажи краткую причину (≤10 слов) в поле reason, затем relevant: true/false.
 """
 
 
+class RelevanceItem(BaseModel):
+    """Verdict for a single product."""
+
+    reason: Annotated[
+        str,
+        Field(description="One-sentence explanation of the relevance decision."),
+    ]
+    relevant: Annotated[
+        bool,
+        Field(description="True if the product matches the query, False otherwise."),
+    ]
+
+
 class RelevanceBatch(BaseModel):
-    """Structured output: relevance flag for each product in the batch."""
+    """Structured output: relevance verdicts for each product in the batch."""
 
     results: Annotated[
-        list[bool],
-        Field(description="Relevance flag for each product, in the same order as the input list."),
+        list[RelevanceItem],
+        Field(description="Verdict for each product, in the same order as the input list."),
     ]
 
 
 async def filter_relevant(query: str, products: list[dict]) -> list[dict]:
     """
     Filter *products* to those relevant to *query* using a local Ollama model.
+
+    Batches are scored **concurrently** (up to ``ollama_settings.concurrency``
+    parallel requests) so total latency ≈ slowest single batch, not the sum.
 
     If Ollama is unreachable or returns a malformed response the original list
     is returned unchanged so the endpoint never fails silently.
@@ -60,12 +93,25 @@ async def filter_relevant(query: str, products: list[dict]) -> list[dict]:
     if not products:
         return products
 
-    kept: list[dict] = []
     batch_size = ollama_settings.batch_size
+    batches = [
+        products[offset : offset + batch_size]
+        for offset in range(0, len(products), batch_size)
+    ]
 
-    for offset in range(0, len(products), batch_size):
-        batch = products[offset : offset + batch_size]
-        flags = await _score_batch(query, batch)
+    # Limit concurrent Ollama requests to avoid overwhelming the server
+    semaphore = asyncio.Semaphore(ollama_settings.concurrency)
+
+    async def _score_with_sem(batch: list[dict]) -> list[bool]:
+        async with semaphore:
+            return await _score_batch(query, batch)
+
+    batch_flags: list[list[bool]] = await asyncio.gather(
+        *(_score_with_sem(b) for b in batches)
+    )
+
+    kept: list[dict] = []
+    for batch, flags in zip(batches, batch_flags):
         for product, relevant in zip(batch, flags):
             if relevant:
                 kept.append(product)
@@ -79,7 +125,6 @@ async def filter_relevant(query: str, products: list[dict]) -> list[dict]:
     return kept
 
 
-
 async def _score_batch(query: str, batch: list[dict]) -> list[bool]:
     """Ask the LLM to score a single batch. Returns a list of booleans."""
     numbered = "\n".join(
@@ -87,7 +132,8 @@ async def _score_batch(query: str, batch: list[dict]) -> list[bool]:
     )
     user_message = (
         f"Запрос пользователя: «{query}»\n\n"
-        f"Товары:\n{numbered}"
+        f"Оцени каждый товар по порядку, верни ровно {len(batch)} результата:\n"
+        f"{numbered}"
     )
 
     try:
@@ -114,16 +160,30 @@ async def _score_batch(query: str, batch: list[dict]) -> list[bool]:
         )
         return [True] * len(batch)  # pass-through on error
 
-    flags = result.results
-    if len(flags) != len(batch):
+    items = result.results
+
+    # Log reasoning for debugging
+    for i, item in enumerate(items):
+        logger.debug(
+            "[%d] relevant=%s | %s | reason: %s",
+            i + 1,
+            item.relevant,
+            _product_label(batch[i]) if i < len(batch) else "?",
+            item.reason,
+        )
+
+    if len(items) != len(batch):
         logger.warning(
-            "Ollama returned %d flags for %d products — passing all through",
-            len(flags),
+            "Ollama returned %d items for %d products — truncating/padding",
+            len(items),
             len(batch),
         )
-        return [True] * len(batch)
+        # Truncate if too many, pad with True (pass-through) if too few
+        flags = [item.relevant for item in items[:len(batch)]]
+        flags += [True] * (len(batch) - len(flags))
+        return flags
 
-    return flags
+    return [item.relevant for item in items]
 
 
 def _product_label(product: dict) -> str:

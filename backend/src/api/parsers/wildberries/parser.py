@@ -104,7 +104,7 @@ class WildberriesSeleniumParser:
     @property
     def _d(self) -> Chrome:
         if not self.driver:
-            raise RuntimeError("Драйвер не запущен")
+            raise RuntimeError("Driver is not running")
         return self.driver
 
     async def _page_blob(self) -> str:

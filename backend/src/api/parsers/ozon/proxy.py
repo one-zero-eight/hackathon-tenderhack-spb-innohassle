@@ -42,18 +42,18 @@ def parse_proxy(value: str) -> ProxySettings:
     """
     raw = value.strip()
     if not raw:
-        raise ValueError("Пустой адрес прокси")
+        raise ValueError("Proxy address is empty")
 
     parsed = urlparse(raw if "://" in raw else f"http://{raw}")
     scheme = (parsed.scheme or "http").lower()
     if scheme not in ("http", "https", "socks5", "socks4"):
-        raise ValueError(f"Схема не поддерживается: {scheme}")
+        raise ValueError(f"Unsupported scheme: {scheme}")
 
     host = parsed.hostname
     port = parsed.port
     if not host or not port:
         raise ValueError(
-            "Укажите host и port, например: http://127.0.0.1:8080 или socks5://127.0.0.1:1080",
+            "Specify host and port, for example: http://127.0.0.1:8080 or socks5://127.0.0.1:1080",
         )
 
     server = f"{scheme}://{host}:{port}"
@@ -122,7 +122,7 @@ def apply_proxy(options: webdriver.ChromeOptions, proxy: ProxySettings | str | N
     Настраивает прокси через аргументы Chrome.
 
     Не используем options.single_proxy: для него driverless ждёт свой MV3 service worker,
-  что в headless часто падает с «Couldn't find mv3 extension within 10 seconds».
+    что в headless часто падает с «Couldn't find mv3 extension within 10 seconds».
     """
     if not proxy:
         return None
@@ -131,9 +131,9 @@ def apply_proxy(options: webdriver.ChromeOptions, proxy: ProxySettings | str | N
     if settings.has_auth:
         options.use_extension = False
         options.add_extension(str(_proxy_auth_extension(settings)))
-        logger.info("Прокси с авторизацией: %s", settings.log_safe())
+        logger.info("Proxy with authentication: %s", settings.log_safe())
     else:
         options.add_argument(f"--proxy-server={settings.server}")
-        logger.info("Прокси: %s", settings.server)
+        logger.info("Proxy: %s", settings.server)
 
     return settings

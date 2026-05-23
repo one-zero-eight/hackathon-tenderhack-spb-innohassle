@@ -83,7 +83,7 @@ async def warmup_ozon_session(
     manual_wait = 90 if via_proxy and not headless else (60 if not headless else 45)
     nav_retries = page_load_retries if slow else min(page_load_retries, 2)
 
-    logger.info("Прогрев: открываю %s", OZON_HOME)
+    logger.info("Warmup: opening %s", OZON_HOME)
     await safe_get(
         driver,
         OZON_HOME,
@@ -98,11 +98,11 @@ async def warmup_ozon_session(
     if await _is_blocked(driver):
         if headless:
             raise OzonAccessError(
-                "Ozon заблокировал доступ на главной. Запустите без --headless.",
+                "Ozon blocked access on the home page. Run without --headless.",
                 url=await driver.current_url,
             )
         logger.warning(
-            "Антибот/капча — до %d с на прохождение в окне Chrome",
+            "Antibot/captcha: up to %d s to complete it in the Chrome window",
             manual_wait,
         )
         deadline = asyncio.get_running_loop().time() + manual_wait
@@ -113,19 +113,19 @@ async def warmup_ozon_session(
                 break
         if await _is_blocked(driver):
             raise OzonAccessError(
-                "Не удалось пройти проверку на главной Ozon.",
+                "Failed to pass the check on the Ozon home page.",
                 url=await driver.current_url,
             )
 
     try:
         await wait_for_css(driver, SEARCH_INPUT_CSS, timeout=min(float(element_wait_timeout), 8.0))
     except (TimeoutError, NoSuchElementException):
-        logger.debug("Поле поиска не дождались — продолжаем")
+        logger.debug("Search field did not appear in time; continuing")
 
     count = await _count_ozon_cookies(driver)
-    logger.info("Cookies с главной Ozon: %d", count)
+    logger.info("Cookies from Ozon home page: %d", count)
     if count < 2:
-        logger.warning("Мало cookies (%d)", count)
+        logger.warning("Too few cookies (%d)", count)
     return count
 
 
@@ -142,10 +142,10 @@ async def prime_session_with_cookies(
     """
     path = resolve_cookies_path(cookies_path)
     if not path or not path.exists():
-        logger.warning("Файл cookies не найден: %s", cookies_path)
+        logger.warning("Cookies file not found: %s", cookies_path)
         return 0
 
-    logger.info("Быстрый старт с cookies: %s", path.name)
+    logger.info("Fast start with cookies: %s", path.name)
     added = await apply_cookies(
         driver,
         path,
@@ -159,11 +159,11 @@ async def prime_session_with_cookies(
 
     if await _is_blocked(driver):
         raise OzonAccessError(
-            "Ozon заблокировал доступ после загрузки cookies.",
+            "Ozon blocked access after loading cookies.",
             url=await driver.current_url,
         )
 
-    logger.info("Cookies из файла %s: %d", path.name, added)
+    logger.info("Cookies from file %s: %d", path.name, added)
     return added
 
 

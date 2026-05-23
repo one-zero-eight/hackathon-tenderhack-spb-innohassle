@@ -7,8 +7,6 @@ services:
       db:
         # Wait for the database to be ready before starting the application
         condition: service_healthy
-      nominatim:
-        condition: service_healthy
     restart: always
     ports:
       - "8000:8000"
@@ -33,28 +31,5 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
 
-  nominatim:
-    # See more: https://hub.docker.com/r/mediagis/nominatim
-    # NOMINATIM_DATA_LABEL sets which OSM extract to import on first run.
-    # Russia-focused label keeps the image lean while covering all Russian cities.
-    # Change PBF_URL to a larger extract (e.g. planet) if international coverage is needed.
-    image: "mediagis/nominatim:4.4"
-    restart: always
-    environment:
-      PBF_URL: "https://download.geofabrik.de/russia-latest.osm.pbf"
-      REPLICATION_URL: "https://download.geofabrik.de/russia-updates/"
-      NOMINATIM_PASSWORD: ${NOMINATIM_PASSWORD:-nominatim}
-    volumes:
-      - "nominatim-data:/var/lib/postgresql/14/main"
-    ports:
-      - "8080:8080"
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/status"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 300s  # First run imports the OSM dump — this can take several minutes
-
 volumes:
   postgres:
-  nominatim-data:

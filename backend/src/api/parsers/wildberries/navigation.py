@@ -52,7 +52,7 @@ async def safe_get(
                 exc,
             )
 
-    raise WildberriesAccessError(f"Не удалось открыть: {url}", url=url) from last_exc
+    raise WildberriesAccessError(f"Failed to open: {url}", url=url) from last_exc
 
 
 async def _stop_loading(driver: Chrome) -> None:

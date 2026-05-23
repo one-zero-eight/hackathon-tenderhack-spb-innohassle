@@ -139,7 +139,7 @@ class OzonSeleniumParser:
     @property
     def _d(self) -> Chrome:
         if not self.driver:
-            raise RuntimeError("Драйвер не запущен")
+            raise RuntimeError("Driver is not running")
         return self.driver
 
     async def _sleep(self, min_sec: float, max_sec: float | None = None) -> None:
@@ -171,7 +171,7 @@ class OzonSeleniumParser:
             await self._sleep(0.3, 0.5)
         if await self._is_blocked():
             raise OzonAccessError(
-                f"Ozon ограничил доступ: {url}. Попробуйте без --headless, --slow, меньший -n.",
+                f"Ozon restricted access: {url}. Try without --headless, with --slow, or a smaller -n.",
                 url=url,
             )
 
@@ -218,7 +218,7 @@ class OzonSeleniumParser:
             return "title/url unavailable"
 
     async def search(self, query: str) -> None:
-        logger.info("Поиск: %s", query)
+        logger.info("Search: %s", query)
         search_url = f"{OZON_HOME}search/?text={quote(query)}&from_global=true"
         cards_timeout = self._serp_wait_timeout()
         attempts = 3 if self.keep_alive else 2
@@ -229,7 +229,7 @@ class OzonSeleniumParser:
             await self._dismiss_overlays()
             if await self._is_blocked():
                 raise OzonAccessError(
-                    f"Ozon ограничил доступ при поиске ({await self._page_context()})",
+                    f"Ozon restricted access during search ({await self._page_context()})",
                     url=search_url,
                 )
             try:
@@ -283,12 +283,12 @@ class OzonSeleniumParser:
         await self._dismiss_overlays()
         if await self._is_blocked():
             raise OzonAccessError(
-                f"Ozon ограничил доступ на главной ({await self._page_context()})",
+                f"Ozon restricted access on the home page ({await self._page_context()})",
                 url=OZON_HOME,
             )
         if not await self._try_fill_search_input(query):
             raise OzonAccessError(
-                f"Поле поиска не найдено ({await self._page_context()})",
+                f"Search field not found ({await self._page_context()})",
             )
         await self._sleep(0.3, 0.7)
         await self._d.send_keys("\n")
@@ -297,7 +297,7 @@ class OzonSeleniumParser:
             await self._wait_serp_ready(serp_timeout)
         except TimeoutError as exc:
             raise OzonAccessError(
-                f"Товары в выдаче не появились после ввода запроса ({await self._page_context()})",
+                f"Products did not appear in search results after entering the query ({await self._page_context()})",
             ) from exc
 
     async def _scroll_step(self) -> None:
@@ -380,14 +380,14 @@ class OzonSeleniumParser:
         prev_total = 0
         max_rounds = self._scroll_rounds_for_limit(limit)
 
-        logger.info("Прокрутка выдачи для %d товаров (до %d раундов)...", limit, max_rounds)
+        logger.info("Scrolling search results for %d products (up to %d rounds)...", limit, max_rounds)
 
         for _rnd in range(max_rounds):
             if _rnd > 0 and await self._is_blocked():
                 if ordered:
-                    logger.warning("Блокировка после %d товаров", len(ordered))
+                    logger.warning("Blocked after %d products", len(ordered))
                     break
-                raise OzonAccessError("Блокировка при загрузке выдачи")
+                raise OzonAccessError("Blocked while loading search results")
 
             for item in await self._extract_from_listing():
                 url = self._normalize_url(item.get("href", ""))
@@ -416,7 +416,7 @@ class OzonSeleniumParser:
         return ordered[:limit]
 
     async def _parse_product_page(self, url: str, listing: dict, position: int) -> ProductResult:
-        logger.info("[%d] Карточка: %s", position, url)
+        logger.info("[%d] Product page: %s", position, url)
         title = listing.get("title") or "Без названия"
         price = listing.get("price")
         image = listing.get("image")
@@ -468,7 +468,7 @@ class OzonSeleniumParser:
         except OzonAccessError:
             raise
         except Exception as exc:
-            logger.warning("Ошибка карточки %s: %s", url, exc)
+            logger.warning("Product page error %s: %s", url, exc)
 
         return ProductResult(
             title=title,
@@ -488,12 +488,12 @@ class OzonSeleniumParser:
         batch_size: int = 4,
     ) -> list[ProductResult]:
         if fetch_details and limit <= batch_size * 2:
-            raise ValueError(f"Требуется n > 2*m: n={limit}, m={batch_size}")
+            raise ValueError(f"Requires n > 2*m: n={limit}, m={batch_size}")
 
         await self.search(query)
         listing_items = await self.collect_products(limit)
         if not listing_items:
-            raise OzonAccessError("Товары в выдаче не найдены")
+            raise OzonAccessError("No products found in search results")
 
         if not fetch_details:
             return [
@@ -513,7 +513,7 @@ class OzonSeleniumParser:
             await asyncio.sleep(random.uniform(0.05, 0.1))
             if pos > 1 and (pos - 1) % batch_size == 0:
                 pause = random.uniform(5, 10)
-                logger.info("Пауза после %d товаров: %.1f с", batch_size, pause)
+                logger.info("Pause after %d products: %.1f s", batch_size, pause)
                 await asyncio.sleep(pause)
             results.append(await self._parse_product_page(item["url"], item, pos))
         return results

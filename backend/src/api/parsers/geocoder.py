@@ -1,323 +1,134 @@
 """
-Geocoder helpers for marketplace parsers.
+Location helpers for marketplace parsers.
 
-Resolves a free-text city/region name to:
+Resolves a known city/region name to:
   - Wildberries internal ``dest`` ID (negative integer used by search.wb.ru)
   - Yandex Market ``lr`` region ID (Yandex Geobase integer)
 
-Resolution strategy (no external third-party APIs):
-  1. Case-insensitive static lookup table (instant, no network).
-  2. Local Nominatim HTTP API (running as a Docker container on the same
-     Docker network).  The base URL is taken from ``api_settings.nominatim_url``.
-  3. Fall back to Moscow defaults when resolution fails.
+The supported locations are intentionally static and shared between both
+marketplaces. Unknown locations fall back to Moscow.
 """
 
 from __future__ import annotations
 
 import logging
-
-import requests
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Wildberries  dest IDs
-# Captured via browser dev-tools (Network tab → search.wb.ru request URL)
-# after changing the delivery city on wildberries.ru.
-# ---------------------------------------------------------------------------
-_WB_DEST_MAP: dict[str, int] = {
-    "москва": -1257786,
-    "moscow": -1257786,
-    "санкт-петербург": -158257,
-    "петербург": -158257,
-    "питер": -158257,
-    "saint petersburg": -158257,
-    "st. petersburg": -158257,
-    "новосибирск": -1254478,
-    "novosibirsk": -1254478,
-    "екатеринбург": -1256682,
-    "yekaterinburg": -1256682,
-    "ekaterinburg": -1256682,
-    "казань": -2133462,
-    "kazan": -2133462,
-    "нижний новгород": -2148313,
-    "nizhny novgorod": -2148313,
-    "челябинск": -1264706,
-    "chelyabinsk": -1264706,
-    "самара": -2133977,
-    "samara": -2133977,
-    "уфа": -1336282,
-    "ufa": -1336282,
-    "ростов-на-дону": -2145297,
-    "rostov-on-don": -2145297,
-    "краснодар": -2140617,
-    "krasnodar": -2140617,
-    "омск": -1255498,
-    "omsk": -1255498,
-    "воронеж": -2133914,
-    "voronezh": -2133914,
-    "пермь": -2124756,
-    "perm": -2124756,
-    "волгоград": -2133909,
-    "volgograd": -2133909,
-    "красноярск": -1282985,
-    "krasnoyarsk": -1282985,
-    "саратов": -2133919,
-    "saratov": -2133919,
-    "тюмень": -1264208,
-    "tyumen": -1264208,
-    "тольятти": -2133978,
-    "tolyatti": -2133978,
-    "иркутск": -1257154,
-    "irkutsk": -1257154,
-    "барнаул": -1255457,
-    "barnaul": -1255457,
-    "хабаровск": -1273793,
-    "khabarovsk": -1273793,
-    "владивосток": -1274204,
-    "vladivostok": -1274204,
-    "ярославль": -2133855,
-    "yaroslavl": -2133855,
-    "махачкала": -2144509,
-    "makhachkala": -2144509,
-    "томск": -1255566,
-    "tomsk": -1255566,
-    "оренбург": -1261647,
-    "orenburg": -1261647,
-    "кемерово": -1254838,
-    "kemerovo": -1254838,
-    "новокузнецк": -1254840,
-    "novokuznetsk": -1254840,
-    "рязань": -2133856,
-    "ryazan": -2133856,
-    "астрахань": -2144258,
-    "astrakhan": -2144258,
-    "набережные челны": -2133479,
-    "naberezhnye chelny": -2133479,
-    "пенза": -2133916,
-    "penza": -2133916,
-    "липецк": -2133858,
-    "lipetsk": -2133858,
-    "тула": -2133857,
-    "tula": -2133857,
-    "киров": -2133476,
-    "kirov": -2133476,
-    "чебоксары": -2133480,
-    "cheboksary": -2133480,
-    "улан-удэ": -1268443,
-    "ulan-ude": -1268443,
-    "калининград": -2130032,
-    "kaliningrad": -2130032,
-    "балашиха": -1257767,
-    "balashikha": -1257767,
-    "сочи": -2140649,
-    "sochi": -2140649,
-    "ставрополь": -2133988,
-    "stavropol": -2133988,
-    "белгород": -2133911,
-    "belgorod": -2133911,
-    "тверь": -2133853,
-    "tver": -2133853,
-    "иваново": -2133861,
-    "ivanovo": -2133861,
-    "брянск": -2133906,
-    "bryansk": -2133906,
-}
 
-_WB_DEFAULT_DEST = -1257786  # Moscow
+@dataclass(frozen=True)
+class _MarketplaceLocation:
+    aliases: tuple[str, ...]
+    wb_dest: int
+    ym_region: int
 
 
-# ---------------------------------------------------------------------------
-# Yandex Market  lr (region) IDs  — Yandex Geobase integers
-# ---------------------------------------------------------------------------
-_YM_REGION_MAP: dict[str, int] = {
-    "москва": 213,
-    "moscow": 213,
-    "санкт-петербург": 2,
-    "петербург": 2,
-    "питер": 2,
-    "saint petersburg": 2,
-    "st. petersburg": 2,
-    "новосибирск": 65,
-    "novosibirsk": 65,
-    "екатеринбург": 54,
-    "yekaterinburg": 54,
-    "ekaterinburg": 54,
-    "казань": 43,
-    "kazan": 43,
-    "нижний новгород": 47,
-    "nizhny novgorod": 47,
-    "челябинск": 56,
-    "chelyabinsk": 56,
-    "самара": 51,
-    "samara": 51,
-    "уфа": 172,
-    "ufa": 172,
-    "ростов-на-дону": 39,
-    "rostov-on-don": 39,
-    "краснодар": 35,
-    "krasnodar": 35,
-    "омск": 66,
-    "omsk": 66,
-    "воронеж": 193,
-    "voronezh": 193,
-    "пермь": 50,
-    "perm": 50,
-    "волгоград": 38,
-    "volgograd": 38,
-    "красноярск": 62,
-    "krasnoyarsk": 62,
-    "саратов": 194,
-    "saratov": 194,
-    "тюмень": 55,
-    "tyumen": 55,
-    "тольятти": 51,
-    "tolyatti": 51,
-    "иркутск": 63,
-    "irkutsk": 63,
-    "барнаул": 197,
-    "barnaul": 197,
-    "хабаровск": 76,
-    "khabarovsk": 76,
-    "владивосток": 75,
-    "vladivostok": 75,
-    "ярославль": 16,
-    "yaroslavl": 16,
-    "томск": 67,
-    "tomsk": 67,
-    "оренбург": 48,
-    "orenburg": 48,
-    "кемерово": 64,
-    "kemerovo": 64,
-    "новокузнецк": 64,
-    "novokuznetsk": 64,
-    "рязань": 11,
-    "ryazan": 11,
-    "астрахань": 37,
-    "astrakhan": 37,
-    "набережные челны": 43,
-    "naberezhnye chelny": 43,
-    "пенза": 49,
-    "penza": 49,
-    "липецк": 9,
-    "lipetsk": 9,
-    "тула": 15,
-    "tula": 15,
-    "киров": 46,
-    "kirov": 46,
-    "чебоксары": 45,
-    "cheboksary": 45,
-    "улан-удэ": 198,
-    "ulan-ude": 198,
-    "калининград": 22,
-    "kaliningrad": 22,
-    "махачкала": 28,
-    "makhachkala": 28,
-    "владикавказ": 33,
-    "vladikavkaz": 33,
-    "сочи": 239,
-    "sochi": 239,
-    "ставрополь": 36,
-    "stavropol": 36,
-    "белгород": 4,
-    "belgorod": 4,
-    "курск": 8,
-    "kursk": 8,
-    "иваново": 5,
-    "ivanovo": 5,
-    "брянск": 191,
-    "bryansk": 191,
-    "тверь": 14,
-    "tver": 14,
-    "россия": 225,
-    "russia": 225,
-}
-
-_YM_DEFAULT_REGION = 213  # Moscow
+_LOCATIONS: tuple[_MarketplaceLocation, ...] = (
+    _MarketplaceLocation(("москва", "moscow"), -1257786, 213),
+    _MarketplaceLocation(
+        ("санкт-петербург", "петербург", "питер", "saint petersburg", "st. petersburg"),
+        -158257,
+        2,
+    ),
+    _MarketplaceLocation(("новосибирск", "novosibirsk"), -1254478, 65),
+    _MarketplaceLocation(("екатеринбург", "yekaterinburg", "ekaterinburg"), -1256682, 54),
+    _MarketplaceLocation(("казань", "kazan", "иннополис", "innopolis"), -2133462, 43),
+    _MarketplaceLocation(("нижний новгород", "nizhny novgorod"), -2148313, 47),
+    _MarketplaceLocation(("челябинск", "chelyabinsk"), -1264706, 56),
+    _MarketplaceLocation(("самара", "samara"), -2133977, 51),
+    _MarketplaceLocation(("уфа", "ufa"), -1336282, 172),
+    _MarketplaceLocation(("ростов-на-дону", "rostov-on-don"), -2145297, 39),
+    _MarketplaceLocation(("краснодар", "krasnodar"), -2140617, 35),
+    _MarketplaceLocation(("омск", "omsk"), -1255498, 66),
+    _MarketplaceLocation(("воронеж", "voronezh"), -2133914, 193),
+    _MarketplaceLocation(("пермь", "perm"), -2124756, 50),
+    _MarketplaceLocation(("волгоград", "volgograd"), -2133909, 38),
+    _MarketplaceLocation(("красноярск", "krasnoyarsk"), -1282985, 62),
+    _MarketplaceLocation(("саратов", "saratov"), -2133919, 194),
+    _MarketplaceLocation(("тюмень", "tyumen"), -1264208, 55),
+    _MarketplaceLocation(("тольятти", "tolyatti"), -2133978, 51),
+    _MarketplaceLocation(("иркутск", "irkutsk"), -1257154, 63),
+    _MarketplaceLocation(("барнаул", "barnaul"), -1255457, 197),
+    _MarketplaceLocation(("хабаровск", "khabarovsk"), -1273793, 76),
+    _MarketplaceLocation(("владивосток", "vladivostok"), -1274204, 75),
+    _MarketplaceLocation(("ярославль", "yaroslavl"), -2133855, 16),
+    _MarketplaceLocation(("махачкала", "makhachkala"), -2144509, 28),
+    _MarketplaceLocation(("томск", "tomsk"), -1255566, 67),
+    _MarketplaceLocation(("оренбург", "orenburg"), -1261647, 48),
+    _MarketplaceLocation(("кемерово", "kemerovo"), -1254838, 64),
+    _MarketplaceLocation(("новокузнецк", "novokuznetsk"), -1254840, 64),
+    _MarketplaceLocation(("рязань", "ryazan"), -2133856, 11),
+    _MarketplaceLocation(("астрахань", "astrakhan"), -2144258, 37),
+    _MarketplaceLocation(("набережные челны", "naberezhnye chelny"), -2133479, 43),
+    _MarketplaceLocation(("пенза", "penza"), -2133916, 49),
+    _MarketplaceLocation(("липецк", "lipetsk"), -2133858, 9),
+    _MarketplaceLocation(("тула", "tula"), -2133857, 15),
+    _MarketplaceLocation(("киров", "kirov"), -2133476, 46),
+    _MarketplaceLocation(("чебоксары", "cheboksary"), -2133480, 45),
+    _MarketplaceLocation(("улан-удэ", "ulan-ude"), -1268443, 198),
+    _MarketplaceLocation(("калининград", "kaliningrad"), -2130032, 22),
+    _MarketplaceLocation(("сочи", "sochi"), -2140649, 239),
+    _MarketplaceLocation(("ставрополь", "stavropol"), -2133988, 36),
+    _MarketplaceLocation(("белгород", "belgorod"), -2133911, 4),
+    _MarketplaceLocation(("тверь", "tver"), -2133853, 14),
+    _MarketplaceLocation(("иваново", "ivanovo"), -2133861, 5),
+    _MarketplaceLocation(("брянск", "bryansk"), -2133906, 191),
+)
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _nominatim_name_parts(location: str, nominatim_url: str) -> list[str]:
-    """
-    Query the local Nominatim container and return the comma-separated parts
-    of the best-matching display name (lowercased).
-
-    Returns an empty list on any error or when no results are found.
-    """
-    try:
-        resp = requests.get(
-            f"{nominatim_url.rstrip('/')}/search",
-            params={"q": location, "format": "json", "limit": 1, "accept-language": "ru"},
-            headers={"User-Agent": "TenderHack-Backend/1.0"},
-            timeout=5,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data:
-            return [part.strip().lower() for part in data[0].get("display_name", "").split(",")]
-    except Exception as exc:
-        logger.debug("Nominatim lookup failed for %r: %s", location, exc)
-    return []
+def _build_lookup(value_attr: str) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for location in _LOCATIONS:
+        value = getattr(location, value_attr)
+        for alias in location.aliases:
+            if alias in result:
+                raise RuntimeError(f"Duplicate marketplace location alias: {alias!r}")
+            result[alias] = value
+    return result
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+_WB_DEST_MAP = _build_lookup("wb_dest")
+_YM_REGION_MAP = _build_lookup("ym_region")
 
-def resolve_wb_dest(location: str | None, nominatim_url: str) -> int:
+_WB_DEFAULT_DEST = _WB_DEST_MAP["москва"]
+_YM_DEFAULT_REGION = _YM_REGION_MAP["москва"]
+
+
+def _normalize_location(location: str | None) -> str | None:
+    if location is None:
+        return None
+    normalized = location.strip().lower()
+    return normalized or None
+
+
+def resolve_wb_dest(location: str | None) -> int:
     """
     Resolve a city/region name to a Wildberries ``dest`` ID.
 
-    Args:
-        location:      Free-text city name.  ``None`` → Moscow default.
-        nominatim_url: Base URL of the local Nominatim service.
-
-    Returns:
-        Integer dest ID (negative) understood by search.wb.ru.
+    Unknown locations fall back to Moscow.
     """
-    if location is None:
+    key = _normalize_location(location)
+    if key is None:
         return _WB_DEFAULT_DEST
-
-    key = location.strip().lower()
     if key in _WB_DEST_MAP:
         return _WB_DEST_MAP[key]
-
-    # Fallback: try to normalise via local Nominatim
-    for part in _nominatim_name_parts(location, nominatim_url):
-        if part in _WB_DEST_MAP:
-            logger.debug("WB dest resolved %r → %r via Nominatim", location, part)
-            return _WB_DEST_MAP[part]
 
     logger.warning("WB dest not found for %r, falling back to Moscow", location)
     return _WB_DEFAULT_DEST
 
 
-def resolve_ym_region(location: str | None, nominatim_url: str) -> int:
+def resolve_ym_region(location: str | None) -> int:
     """
     Resolve a city/region name to a Yandex Market ``lr`` region ID.
 
-    Args:
-        location:      Free-text city name.  ``None`` → Moscow default.
-        nominatim_url: Base URL of the local Nominatim service.
-
-    Returns:
-        Integer region ID understood by market.yandex.ru as the ``lr`` param.
+    Unknown locations fall back to Moscow.
     """
-    if location is None:
+    key = _normalize_location(location)
+    if key is None:
         return _YM_DEFAULT_REGION
-
-    key = location.strip().lower()
     if key in _YM_REGION_MAP:
         return _YM_REGION_MAP[key]
-
-    # Fallback: try to normalise via local Nominatim
-    for part in _nominatim_name_parts(location, nominatim_url):
-        if part in _YM_REGION_MAP:
-            logger.debug("YM region resolved %r → %r via Nominatim", location, part)
-            return _YM_REGION_MAP[part]
 
     logger.warning("YM region not found for %r, falling back to Moscow", location)
     return _YM_DEFAULT_REGION

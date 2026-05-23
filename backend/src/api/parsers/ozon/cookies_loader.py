@@ -15,7 +15,7 @@ def load_cookies_file(path: Path) -> list[dict]:
     data = json.loads(path.read_text(encoding="utf-8"))
     raw = data.get("cookies", data) if isinstance(data, dict) else data
     if not isinstance(raw, list):
-        raise ValueError("cookies.json: ожидается список (формат Cookie-Editor)")
+        raise ValueError("cookies.json: expected a list (Cookie-Editor format)")
 
     cookies: list[dict] = []
     for item in raw:

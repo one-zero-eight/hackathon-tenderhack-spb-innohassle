@@ -59,25 +59,25 @@ async def safe_get(
             last_exc = exc
             await _stop_loading(driver)
             logger.warning(
-                "Таймаут загрузки %s (попытка %d/%d)%s",
+                "Loading %s timed out (attempt %d/%d)%s",
                 url,
                 attempt,
                 retries,
-                " — прокси может быть медленным" if via_proxy else "",
+                "; proxy may be slow" if via_proxy else "",
             )
         except Exception as exc:
             last_exc = exc
             if "timeout" not in str(exc).lower():
                 raise
             await _stop_loading(driver)
-            logger.warning("Ошибка загрузки %s (попытка %d/%d): %s", url, attempt, retries, exc)
+            logger.warning("Loading %s failed (attempt %d/%d): %s", url, attempt, retries, exc)
 
     hint = (
-        "Проверьте прокси (скорость, RU IP), попробуйте --slow или http:// вместо socks5://."
+        "Check the proxy (speed, RU IP), try --slow, or use http:// instead of socks5://."
         if via_proxy
-        else "Попробуйте --slow или меньший -n."
+        else "Try --slow or a smaller -n."
     )
-    raise OzonAccessError(f"Не удалось открыть: {url}. {hint}", url=url) from last_exc
+    raise OzonAccessError(f"Failed to open: {url}. {hint}", url=url) from last_exc
 
 
 async def _stop_loading(driver: Chrome) -> None:

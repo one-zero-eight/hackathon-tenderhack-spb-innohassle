@@ -23,7 +23,6 @@ dependencies = [
     "python-multipart>=0.0.20",
     "pyvirtualdisplay>=3.0",
     "pyyaml>=6.0.2",
-    "requests>=2.34.2",
     "ruff>=0.12.11",
     "selenium-driverless>=1.9.4",
     "setuptools>=82.0.1",

@@ -23,13 +23,6 @@ $defs:
         title: Secret Key
         type: string
         writeOnly: true
-      nominatim_url:
-        default: http://nominatim:8080
-        examples:
-        - http://nominatim:8080
-        - http://localhost:8080
-        title: Nominatim Url
-        type: string
     required:
     - db_url
     - secret_key

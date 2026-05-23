@@ -13,7 +13,7 @@ import httpx
 
 from src.api.parsers.geocoder import resolve_ym_region
 from src.api.parsers.ozon.user_agent import pick_user_agent
-from src.config import api_settings, yandex_market_settings
+from src.config import yandex_market_settings
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +185,7 @@ async def parse_yandex_market_products(
         location: City/region for regional pricing (e.g. 'Санкт-Петербург').
                   Defaults to Moscow when omitted.
     """
-    lr = resolve_ym_region(location, api_settings.nominatim_url)
+    lr = resolve_ym_region(location)
     target_count = skip + limit
     max_pages = min(
         MAX_YANDEX_PAGES,

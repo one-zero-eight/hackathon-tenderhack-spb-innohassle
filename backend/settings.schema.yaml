@@ -185,6 +185,22 @@ $defs:
         default: 1
         title: Page Load Retries
         type: integer
+      geoip:
+        default: true
+        title: Geoip
+        type: boolean
+      humanize:
+        default: false
+        title: Humanize
+        type: boolean
+      search_api:
+        default: true
+        title: Search Api
+        type: boolean
+      search_api_raw:
+        default: true
+        title: Search Api Raw
+        type: boolean
     title: WildberriesSettings
     type: object
   YandexMarketSettings:

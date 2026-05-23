@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,22 @@ def new_pool_profile_dir(prefix: str) -> Path:
     profile = cloak_profiles_root() / f"{prefix}-{uuid.uuid4().hex[:10]}"
     profile.mkdir(parents=True, exist_ok=True)
     return profile
+
+
+def clear_pool_profiles(prefixes: tuple[str, ...] = ("wb", "ozon")) -> int:
+    """Remove pooled CloakBrowser profile dirs (wb-*, ozon-*) — call on service startup."""
+    root = cloak_profiles_root()
+    removed = 0
+    for prefix in prefixes:
+        for path in root.glob(f"{prefix}-*"):
+            if not path.is_dir():
+                continue
+            shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+            logger.info("CloakBrowser profile removed: %s", path.name)
+    if removed:
+        logger.info("Cleared %d CloakBrowser pool profile(s) in %s", removed, root)
+    return removed
 
 
 @dataclass(frozen=True)

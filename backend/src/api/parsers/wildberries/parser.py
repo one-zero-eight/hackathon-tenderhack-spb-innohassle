@@ -4,318 +4,242 @@ import asyncio
 import json
 import logging
 import random
+import time
 from collections.abc import AsyncIterator
+from pathlib import Path
 from urllib.parse import quote_plus
 
-from selenium_driverless.webdriver import Chrome
+from playwright.async_api import BrowserContext, Page
 
+from src.api.parsers.cloak_browser import (
+    CloakSessionConfig,
+    close_cloak_session,
+    new_pool_profile_dir,
+    open_cloak_session,
+)
+from src.api.parsers.playwright_page import evaluate, goto, page_blob, wait_for_function
 from src.api.parsers.price_utils import parse_rub_price
-from src.api.parsers.wait import safe_execute_script, wait_for_script_true
-from src.api.parsers.wildberries.browser import create_driverless_driver
+from src.api.parsers.wildberries.dom_extract import (
+    CARDS_READY_SCRIPT,
+    WB_BATCH_PAUSE_SEC,
+    WB_CARD_COUNT_SCRIPT,
+    WB_EXTRACT_ALL_CARDS_JS,
+    WB_SCROLL_JS,
+    WB_SCROLL_PAUSE_SEC,
+)
 from src.api.parsers.wildberries.exceptions import WildberriesAccessError
-from src.api.parsers.wildberries.navigation import safe_get
-from src.api.parsers.wildberries.search_api import iter_products_via_browser_api
 
 logger = logging.getLogger(__name__)
 
-WB_STREAM_BATCH_SIZE = 10
 WB_HOME = "https://www.wildberries.ru/"
 WB_SEARCH = "https://www.wildberries.ru/catalog/0/search.aspx?search="
+WB_STREAM_BATCH_SIZE = 10
+
 CHALLENGE_MARKERS = ("почти готов",)
 HARD_BLOCK_MARKERS = (
     "captcha",
     "доступ ограничен",
     "подтвердите",
     "не робот",
+    "429 too many",
 )
-CARDS_READY_SCRIPT = (
-    "return document.querySelectorAll('article, .product-card, [data-nm-id]').length > 0;"
-)
-WB_CARD_COUNT_SCRIPT = (
-    "return document.querySelectorAll('article, .product-card, [data-nm-id]').length;"
-)
-# Plain statements only: Selenium prepends "return", so "() => {}" becomes invalid JS.
-WB_SCROLL_JS = """
-const cards = document.querySelectorAll(
-  '.product-card__wrapper, article.product-card, article[data-nm-id], [data-nm-id]'
-);
-const last = cards[cards.length - 1];
-if (last) {
-  last.scrollIntoView({ block: 'end', behavior: 'instant' });
-} else {
-  window.scrollBy(0, Math.max(window.innerHeight * 0.9, 900));
-}
-window.dispatchEvent(new Event('scroll'));
-const list = document.querySelector(
-  '.product-list, .catalog-page__content, .catalog-page, main'
-);
-if (list && list.scrollHeight > list.clientHeight + 40) {
-  list.scrollTop = list.scrollHeight;
-}
-"""
-WB_EXTRACT_JS = """
-const limit = arguments[0];
-const skip = arguments[1];
-const pickText = (root, sel) => {
-  const el = root.querySelector(sel);
-  return el ? el.innerText.trim() : null;
-};
-const pickAttr = (root, sel, attr) => {
-  const el = root.querySelector(sel);
-  if (!el) return null;
-  return el.getAttribute(attr) || null;
-};
-const pickPrice = (card) => {
-  const sels = [
-    "ins.price__lower-price",
-    ".price__lower-price",
-    ".product-card__price",
-    ".price__wrap",
-    "span[class*='price__lower']",
-    "span[class*='price']",
-  ];
-  for (const sel of sels) {
-    const el = card.querySelector(sel);
-    if (el) {
-      const t = el.innerText.trim();
-      if (/\\d/.test(t)) return t;
-    }
-  }
-  const m = (card.innerText || "").match(/(\\d[\\d\\s\\u00a0]*)\\s*₽/);
-  return m ? m[0].trim() : null;
-};
-const pickOriginalPrice = (card) => {
-  const el = card.querySelector(
-    "del, .price__old, .product-card__price-old, span[class*='price-old'], span[class*='old-price']"
-  );
-  if (!el) return null;
-  const t = el.innerText.trim();
-  return /\\d/.test(t) ? t : null;
-};
-const cards = document.querySelectorAll("article, .product-card, [data-nm-id]");
-const out = [];
-for (const card of cards) {
-  const priceText = pickPrice(card);
-  const link = pickAttr(card, "a.product-card__link, a[href*='/catalog/']", "href");
-  const imageUrl = pickAttr(card, "img", "src") || pickAttr(card, "img", "data-src");
-  let name = pickText(card, ".product-card__name, .goods-name, [class*='product-card__name']");
-  if (name) name = name.replace(/^\\//, "").trim();
-  out.push({
-    name,
-    brand: pickText(card, ".product-card__brand, .brand-name, [class*='brand']"),
-    priceText,
-    originalPriceText: pickOriginalPrice(card),
-    url: link,
-    image_url: imageUrl,
-  });
-}
-return out.slice(skip, skip + limit);
-"""
 
 
-class WildberriesSeleniumParser:
+def _clean_text(value: str | None) -> str | None:
+    if not value:
+        return None
+    return " ".join(value.split()) or None
+
+
+class WildberriesParser:
+    """Wildberries via CloakBrowser: search.aspx SERP, scroll, extract product cards from DOM."""
+
     def __init__(
         self,
         *,
         headless: bool = True,
+        proxy: str | None = None,
+        geoip: bool = True,
+        humanize: bool = False,
         page_load_timeout: int | None = None,
-        element_wait_timeout: int = 45,
-        page_load_retries: int = 3,
+        element_wait_timeout: int = 8,
+        page_load_retries: int = 1,
         keep_alive: bool = False,
+        profile_dir: Path | None = None,
     ) -> None:
         self.headless = headless
+        self.proxy = proxy
+        self.geoip = geoip
+        self.humanize = humanize
+        self.keep_alive = keep_alive
         self.page_load_timeout = page_load_timeout
         self.element_wait_timeout = element_wait_timeout
-        self.page_load_retries = page_load_retries
-        self.keep_alive = keep_alive
-        self.driver: Chrome | None = None
-        self.user_agent: str | None = None
+        self.page_load_retries = max(page_load_retries, 1)
+        self._profile_dir = profile_dir
+        self._context: BrowserContext | None = None
+        self._page: Page | None = None
+        self._bridge_upstream: str | None = None
 
-    async def __aenter__(self) -> WildberriesSeleniumParser:
+    async def __aenter__(self) -> WildberriesParser:
         await self.start()
         return self
 
     async def __aexit__(self, *args: object) -> None:
-        await self.close()
+        await self.close(force=True)
 
     async def start(self) -> None:
-        self.driver, self.user_agent = await create_driverless_driver(headless=self.headless)
+        profile = self._profile_dir
+        if self.keep_alive and profile is None:
+            profile = new_pool_profile_dir("wb")
+        config = CloakSessionConfig(
+            headless=self.headless,
+            proxy=self.proxy,
+            geoip=self.geoip and bool(self.proxy),
+            humanize=self.humanize,
+            user_data_dir=profile if self.keep_alive else None,
+        )
+        self._context, self._page, self._bridge_upstream = await open_cloak_session(config)
 
     async def close(self, *, force: bool = False) -> None:
-        if self.keep_alive and not force:
-            return
-        if self.driver:
-            await self.driver.quit()
-            self.driver = None
+        await close_cloak_session(
+            self._context,
+            keep_alive=self.keep_alive and not force,
+            bridge_upstream=self._bridge_upstream if force or not self.keep_alive else None,
+        )
+        self._context = None
+        self._page = None
+        self._bridge_upstream = None
 
     @property
-    def _d(self) -> Chrome:
-        if not self.driver:
-            raise RuntimeError("Driver is not running")
-        return self.driver
+    def _p(self) -> Page:
+        if not self._page:
+            raise RuntimeError("CloakBrowser page is not started")
+        return self._page
 
-    async def _page_blob(self) -> str:
-        title = (await self._d.title).lower()
-        body = await safe_execute_script(
-            self._d,
-            "return document.body ? document.body.innerText : ''",
-        )
-        return f"{title} {(body or '').lower()}"
+    def _nav_timeout(self) -> float:
+        return float(self.page_load_timeout or 25)
+
+    async def _sleep(self, min_sec: float, max_sec: float | None = None) -> None:
+        await asyncio.sleep(random.uniform(min_sec, max_sec or min_sec))
+
+    async def _is_blocked(self) -> bool:
+        try:
+            title = (await self._p.title()).lower()
+        except Exception:
+            return True
+        blob = await page_blob(self._p)
+        if any(m in title for m in HARD_BLOCK_MARKERS):
+            return True
+        if any(m in blob for m in HARD_BLOCK_MARKERS):
+            return True
+        return False
 
     async def _is_challenge_page(self) -> bool:
-        blob = await self._page_blob()
-        return any(marker in blob for marker in CHALLENGE_MARKERS)
-
-    async def _is_hard_blocked(self) -> bool:
-        blob = await self._page_blob()
-        return any(marker in blob for marker in HARD_BLOCK_MARKERS)
-
-    async def _apply_dest_cookies(self, dest: int) -> None:
-        geo_cookie_value = json.dumps({"id": dest})
-        for cookie_name in ("wbx-geo", "GeoIdsJson"):
-            await self._d.add_cookie(
-                {
-                    "name": cookie_name,
-                    "value": geo_cookie_value,
-                    "domain": ".wildberries.ru",
-                    "path": "/",
-                },
-            )
+        try:
+            title = (await self._p.title()).lower()
+        except Exception:
+            return True
+        return any(m in title for m in CHALLENGE_MARKERS)
 
     async def _wait_past_challenge(self, timeout: float) -> bool:
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            if await self._is_hard_blocked():
+        deadline = time.perf_counter() + timeout
+        while time.perf_counter() < deadline:
+            if await self._is_blocked():
                 return False
             if not await self._is_challenge_page():
                 return True
             await asyncio.sleep(0.4)
         return not await self._is_challenge_page()
 
-    async def _wait_for_product_cards(self, timeout: float) -> bool:
-        try:
-            await wait_for_script_true(
-                self._d,
-                CARDS_READY_SCRIPT,
-                timeout=timeout,
-                poll_interval=0.25,
+    async def _apply_dest_cookies(self, dest: int) -> None:
+        if not self._context:
+            return
+        geo_value = json.dumps({"id": dest})
+        for name in ("wbx-geo", "GeoIdsJson"):
+            await self._context.add_cookies(
+                [
+                    {
+                        "name": name,
+                        "value": geo_value,
+                        "domain": ".wildberries.ru",
+                        "path": "/",
+                    },
+                ],
             )
-            return True
-        except TimeoutError:
-            return False
 
     async def _count_product_cards(self) -> int:
-        count = await safe_execute_script(self._d, WB_CARD_COUNT_SCRIPT)
-        return int(count) if isinstance(count, int) else 0
+        count = await evaluate(self._p, WB_CARD_COUNT_SCRIPT)
+        return int(count) if isinstance(count, (int, float)) else 0
 
     def _scroll_rounds_for_target(self, target: int) -> int:
         items_per_scroll = 6
         rounds = (target + items_per_scroll - 1) // items_per_scroll + 2
         return max(5, min(rounds, 35))
 
-    async def _scroll_to_load_cards(self, target: int) -> int:
-        """Scroll SERP until enough product cards are in the DOM (WB lazy-loads on scroll)."""
-        max_rounds = self._scroll_rounds_for_target(target)
-        stale = 0
-        prev = 0
-
-        for rnd in range(max_rounds):
-            count = await self._count_product_cards()
-            if count >= target:
-                logger.info("WB scroll: %d cards in DOM (target %d, round %d)", count, target, rnd)
-                return count
-
-            if count == prev:
-                stale += 1
-            else:
-                stale = 0
-            prev = count
-
-            if stale >= 2:
-                logger.info(
-                    "WB scroll stopped: %d cards in DOM (target %d, no new cards)",
-                    count,
-                    target,
-                )
-                break
-
-            await safe_execute_script(self._d, WB_SCROLL_JS)
-            await asyncio.sleep(random.uniform(0.45, 0.85))
-
-        return prev
-
     async def warmup_session(self) -> None:
-        challenge_timeout = max(float(self.element_wait_timeout) * 2, 20.0)
-        logger.info("Wildberries session warmup")
-        await safe_get(
-            self._d,
-            WB_HOME,
-            page_load_timeout=self.page_load_timeout,
-            retries=1,
-            fast=True,
-            wait_load=True,
-        )
-        if not await self._wait_past_challenge(challenge_timeout):
-            title = await self._d.title
-            logger.warning("WB warmup: challenge not cleared (title=%r)", title)
+        logger.info("Wildberries session warmup (CloakBrowser DOM)")
+        await goto(self._p, WB_HOME, timeout_sec=self._nav_timeout(), retries=2)
+        await self._sleep(0.5, 1.0)
+        if await self._is_challenge_page():
+            await self._wait_past_challenge(max(float(self.element_wait_timeout) * 2, 20.0))
 
     async def _open_search_page(self, keyword: str, *, dest: int) -> None:
         search_url = f"{WB_SEARCH}{quote_plus(keyword)}&dest={dest}"
         challenge_timeout = max(float(self.element_wait_timeout) * 2, 20.0)
-        cards_timeout = min(float(self.element_wait_timeout), 12.0)
+        cards_timeout = min(max(float(self.element_wait_timeout), 8.0), 15.0)
         attempts = max(self.page_load_retries, 2)
         last_title = ""
 
         for attempt in range(1, attempts + 1):
-            await safe_get(
-                self._d,
-                search_url,
-                page_load_timeout=self.page_load_timeout,
-                retries=1,
-                fast=True,
-                wait_load=True,
-            )
             await self._apply_dest_cookies(dest)
-            await safe_get(
-                self._d,
-                search_url,
-                page_load_timeout=self.page_load_timeout,
-                retries=1,
-                fast=True,
-                wait_load=True,
-            )
-            await asyncio.sleep(1.5)
-            last_title = await self._d.title
+            await goto(self._p, search_url, timeout_sec=self._nav_timeout(), retries=2)
+            await self._sleep(1.2, 2.0)
+            last_title = await self._p.title()
 
-            if await self._is_hard_blocked():
+            if await self._is_blocked():
+                logger.warning(
+                    "WB search blocked (title=%r, attempt %d/%d)",
+                    last_title,
+                    attempt,
+                    attempts,
+                )
+                if attempt < attempts:
+                    await self._sleep(2.0, 3.0)
+                    continue
                 break
 
             if await self._is_challenge_page():
                 logger.info(
-                    "WB challenge (title=%r), waiting up to %.0fs (attempt %d/%d)",
+                    "WB challenge (title=%r), waiting up to %.0fs",
                     last_title,
                     challenge_timeout,
+                )
+                if await self._wait_past_challenge(challenge_timeout):
+                    pass
+                elif attempt < attempts:
+                    await self._sleep(2.0, 3.0)
+                    continue
+                else:
+                    break
+
+            try:
+                await wait_for_function(
+                    self._p,
+                    CARDS_READY_SCRIPT,
+                    timeout_sec=cards_timeout,
+                    poll_interval_sec=0.25,
+                )
+                logger.info("WB SERP ready: %s (title=%r)", self._p.url, last_title)
+                return
+            except TimeoutError:
+                logger.warning(
+                    "WB search cards not ready (title=%r, attempt %d/%d)",
+                    last_title,
                     attempt,
                     attempts,
                 )
-                if not await self._wait_past_challenge(challenge_timeout):
-                    last_title = await self._d.title
-                    if attempt < attempts:
-                        await asyncio.sleep(2)
-                        continue
-                    break
-
-            if await self._wait_for_product_cards(cards_timeout):
-                return
-
-            logger.warning(
-                "WB search not ready (title=%r, attempt %d/%d)",
-                last_title,
-                attempt,
-                attempts,
-            )
-            if attempt < attempts:
-                await asyncio.sleep(2)
+                if attempt < attempts:
+                    await self._sleep(2.0, 3.0)
 
         raise WildberriesAccessError(
             f"anti-bot or empty page (title={last_title!r})",
@@ -327,7 +251,7 @@ class WildberriesSeleniumParser:
         if sale_price is None:
             return None
         url = item.get("url")
-        if url and url.startswith("/"):
+        if isinstance(url, str) and url.startswith("/"):
             url = f"https://www.wildberries.ru{url}"
         return {
             "name": item.get("name"),
@@ -340,23 +264,8 @@ class WildberriesSeleniumParser:
         }
 
     async def _extract_raw_cards(self) -> list[dict]:
-        raw = await safe_execute_script(self._d, WB_EXTRACT_JS, 10_000, 0)
+        raw = await evaluate(self._p, WB_EXTRACT_ALL_CARDS_JS)
         return raw if isinstance(raw, list) else []
-
-    async def _extract_products(self, limit: int, skip: int) -> list[dict]:
-        raw = await safe_execute_script(self._d, WB_EXTRACT_JS, limit, skip)
-        if not isinstance(raw, list):
-            return []
-
-        products: list[dict] = []
-        for item in raw:
-            product = self._raw_item_to_product(item)
-            if product is None:
-                continue
-            products.append(product)
-            if len(products) >= limit:
-                break
-        return products
 
     async def _iter_products_from_dom(
         self,
@@ -372,14 +281,20 @@ class WildberriesSeleniumParser:
         emitted = 0
         pending: list[dict] = []
         stale = 0
+        dom_batch_no = 0
 
         def drain_batches(*, force: bool = False) -> list[list[dict]]:
-            nonlocal pending
+            nonlocal pending, dom_batch_no
             batches: list[list[dict]] = []
             while len(pending) >= batch_size:
-                batches.append(pending[:batch_size])
+                dom_batch_no += 1
+                chunk = pending[:batch_size]
                 pending = pending[batch_size:]
+                logger.info("WB DOM batch %d: %d products", dom_batch_no, len(chunk))
+                batches.append(chunk)
             if force and pending:
+                dom_batch_no += 1
+                logger.info("WB DOM batch %d: %d products (final)", dom_batch_no, len(pending))
                 batches.append(pending)
                 pending = []
             return batches
@@ -387,6 +302,8 @@ class WildberriesSeleniumParser:
         for rnd in range(max_rounds):
             prev_seen = len(seen_keys)
             for item in await self._extract_raw_cards():
+                if not isinstance(item, dict):
+                    continue
                 product = self._raw_item_to_product(item)
                 if product is None:
                     continue
@@ -417,18 +334,28 @@ class WildberriesSeleniumParser:
                 stale += 1
             else:
                 stale = 0
+                logger.info(
+                    "WB DOM scroll round %d: +%d cards (%d/%d in DOM, emitted %d/%d)",
+                    rnd,
+                    new_cards,
+                    await self._count_product_cards(),
+                    target_cards,
+                    emitted,
+                    limit,
+                )
+
             if emitted >= limit:
                 break
             if stale >= 4:
                 logger.info(
-                    "WB DOM scroll stopped at %d items (no new cards, round %d)",
+                    "WB DOM scroll stopped: %d products (no new cards, round %d)",
                     emitted,
                     rnd,
                 )
                 break
             if rnd + 1 < max_rounds:
-                await safe_execute_script(self._d, WB_SCROLL_JS)
-                await asyncio.sleep(random.uniform(0.7, 1.2))
+                await evaluate(self._p, WB_SCROLL_JS)
+                await self._sleep(*WB_SCROLL_PAUSE_SEC)
 
         for batch in drain_batches(force=True):
             yield batch
@@ -442,36 +369,8 @@ class WildberriesSeleniumParser:
         dest: int = -1257786,
         batch_size: int = WB_STREAM_BATCH_SIZE,
     ) -> AsyncIterator[list[dict]]:
-        logger.info("Wildberries stream: %r (dest=%d)", keyword, dest)
+        logger.info("Wildberries DOM stream: %r (dest=%d, limit=%d)", keyword, dest, limit)
         await self._open_search_page(keyword, dest=dest)
-
-        emitted = 0
-        try:
-            async for batch in iter_products_via_browser_api(
-                self._d,
-                keyword,
-                limit,
-                skip=skip,
-                dest=dest,
-                batch_size=batch_size,
-            ):
-                emitted += len(batch)
-                yield batch
-            if emitted > 0:
-                logger.info(
-                    "Wildberries stream done for %r (limit=%d): %d items (API)",
-                    keyword,
-                    limit,
-                    emitted,
-                )
-                return
-            logger.warning("WB search API returned 0 items for %r, trying DOM", keyword)
-        except Exception as exc:
-            logger.warning(
-                "WB search API via browser failed for %r, DOM fallback: %s",
-                keyword,
-                exc,
-            )
 
         emitted = 0
         async for batch in self._iter_products_from_dom(
@@ -483,10 +382,10 @@ class WildberriesSeleniumParser:
             yield batch
 
         logger.info(
-            "Wildberries stream done for %r (limit=%d): %d items (DOM)",
+            "Wildberries DOM stream done for %r: %d products (limit=%d)",
             keyword,
-            limit,
             emitted,
+            limit,
         )
 
     async def run(
@@ -497,20 +396,10 @@ class WildberriesSeleniumParser:
         skip: int = 0,
         dest: int = -1257786,
     ) -> list[dict]:
-        logger.info("Wildberries search: %r (dest=%d)", keyword, dest)
         products: list[dict] = []
         async for batch in self.iter_products(keyword, limit, skip=skip, dest=dest, batch_size=limit):
             products.extend(batch)
-        logger.info(
-            "Wildberries parse done for %r (limit=%d): %d items",
-            keyword,
-            limit,
-            len(products),
-        )
-        return products
+        return products[:limit]
 
 
-def _clean_text(value: str | None) -> str | None:
-    if not value:
-        return None
-    return " ".join(value.split()) or None
+WildberriesSeleniumParser = WildberriesParser

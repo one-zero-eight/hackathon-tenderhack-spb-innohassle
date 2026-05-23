@@ -34,6 +34,17 @@ class PriceSearchRequest(BaseSchema):
         default=False,
         description="Also stream raw composer JSON as type=ozon_composer (debug; large payloads).",
     )
+    wb_search_api_raw: bool | None = Field(
+        default=None,
+        description=(
+            "If true, Wildberries uses search.wb.ru via CloakBrowser HTTP and parses on this backend. "
+            "If null, uses wildberries_settings.search_api_raw."
+        ),
+    )
+    include_wb_search_api_data: bool = Field(
+        default=False,
+        description="Also stream raw search.wb.ru JSON as type=wb_search (debug).",
+    )
 
 
 class ProductPrice(BaseSchema):

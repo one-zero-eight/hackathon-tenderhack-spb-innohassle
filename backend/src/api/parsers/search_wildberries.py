@@ -7,7 +7,6 @@ from src.api.parsers.wildberries.exceptions import WildberriesAccessError
 
 logger = logging.getLogger(__name__)
 
-# Moscow delivery region (search.wb.ru ``dest`` parameter).
 WB_MOSCOW_DEST = -1257786
 
 
@@ -19,7 +18,6 @@ async def parse_wildberries_products(
     dest: int = WB_MOSCOW_DEST,
     location: str | None = None,
 ) -> list[dict]:
-    """Parse Wildberries via pooled Chrome sessions (warm browser, regional pricing)."""
     dest = resolve_wb_dest(location)
     logger.info(
         "Wildberries parse start: keyword=%r limit=%d skip=%d dest=%d (pooled)",
@@ -41,6 +39,27 @@ async def parse_wildberries_products(
     except RuntimeError as exc:
         logger.error("Wildberries parse failed for %r: %s", keyword, exc)
         raise RuntimeError(f"Failed to scrape Wildberries: {exc}") from exc
+
+
+async def iter_wildberries_search_pages(
+    keyword: str,
+    limit: int = 5,
+    *,
+    skip: int = 0,
+    location: str | None = None,
+) -> AsyncIterator[dict]:
+    """Stream search.wb.ru pages until skip+limit priced products are available."""
+    try:
+        async for page in get_browser_session_pool().iter_wildberries_search_pages(
+            keyword,
+            limit,
+            skip=skip,
+            location=location,
+        ):
+            yield page
+    except WildberriesAccessError as exc:
+        logger.error("Wildberries search API raw stream failed for %r: %s", keyword, exc)
+        raise
 
 
 async def iter_wildberries_products(

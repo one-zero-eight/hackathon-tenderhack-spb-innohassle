@@ -61,7 +61,10 @@ services:
             POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
         networks:
             - app_network
+<<<<<<< HEAD
 
+=======
+>>>>>>> 5be78a8 (feat: remove nominatim as it turned way too much time to load. Translate all logs to English)
 volumes:
     caddy_data:
     postgres:

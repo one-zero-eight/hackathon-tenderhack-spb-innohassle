@@ -246,10 +246,17 @@ class OzonParser:
         self._bridge_upstream = None
 
     @property
+<<<<<<< HEAD
     def _p(self) -> Page:
         if not self._page:
             raise RuntimeError("CloakBrowser page is not started")
         return self._page
+=======
+    def _d(self) -> Chrome:
+        if not self.driver:
+            raise RuntimeError("Driver is not running")
+        return self.driver
+>>>>>>> 5be78a8 (feat: remove nominatim as it turned way too much time to load. Translate all logs to English)
 
     async def _sleep(self, min_sec: float, max_sec: float | None = None) -> None:
         await asyncio.sleep(random.uniform(min_sec, max_sec or min_sec))
@@ -279,7 +286,11 @@ class OzonParser:
             await self._sleep(0.3, 0.5)
         if await self._is_blocked():
             raise OzonAccessError(
+<<<<<<< HEAD
                 f"Ozon ограничил доступ: {url}. Проверьте proxy/cookies (CloakBrowser).",
+=======
+                f"Ozon restricted access: {url}. Try without --headless, with --slow, or a smaller -n.",
+>>>>>>> 5be78a8 (feat: remove nominatim as it turned way too much time to load. Translate all logs to English)
                 url=url,
             )
 
@@ -302,7 +313,7 @@ class OzonParser:
         await wait_for_function(self._p, SERP_PRODUCTS_READY, timeout_sec=timeout, poll_interval_sec=0.15)
 
     async def search(self, query: str) -> None:
-        logger.info("Поиск: %s", query)
+        logger.info("Search: %s", query)
         search_url = f"{OZON_HOME}search/?text={quote(query)}&from_global=true"
         cards_timeout = self._serp_wait_timeout()
 
@@ -312,7 +323,7 @@ class OzonParser:
             await self._dismiss_overlays()
             if await self._is_blocked():
                 raise OzonAccessError(
-                    f"Ozon ограничил доступ при поиске ({await self._page_context()})",
+                    f"Ozon restricted access during search ({await self._page_context()})",
                     url=search_url,
                 )
             try:
@@ -363,11 +374,31 @@ class OzonParser:
         await self._goto(OZON_HOME, fast=False)
         await self._dismiss_overlays()
         if await self._is_blocked():
+<<<<<<< HEAD
             raise OzonAccessError(f"Ozon ограничил доступ ({await self._page_context()})")
         if not await self._try_fill_search_input(query):
             raise OzonAccessError("Поле поиска не найдено")
         await self._sleep(0.5, 0.9)
         await self._wait_serp_ready(serp_timeout)
+=======
+            raise OzonAccessError(
+                f"Ozon restricted access on the home page ({await self._page_context()})",
+                url=OZON_HOME,
+            )
+        if not await self._try_fill_search_input(query):
+            raise OzonAccessError(
+                f"Search field not found ({await self._page_context()})",
+            )
+        await self._sleep(0.3, 0.7)
+        await self._d.send_keys("\n")
+        await self._sleep(0.8, 1.2)
+        try:
+            await self._wait_serp_ready(serp_timeout)
+        except TimeoutError as exc:
+            raise OzonAccessError(
+                f"Products did not appear in search results after entering the query ({await self._page_context()})",
+            ) from exc
+>>>>>>> 5be78a8 (feat: remove nominatim as it turned way too much time to load. Translate all logs to English)
 
     async def _scroll_step(self) -> None:
         await evaluate(self._p, SCROLL_STEP_JS)
@@ -417,7 +448,7 @@ class OzonParser:
         prev_total = 0
         max_rounds = self._scroll_rounds_for_limit(limit)
 
-        logger.info("Прокрутка выдачи для %d товаров (до %d раундов)...", limit, max_rounds)
+        logger.info("Scrolling search results for %d products (up to %d rounds)...", limit, max_rounds)
 
         composer_by_url: dict[str, dict] = {}
         try:
@@ -428,9 +459,9 @@ class OzonParser:
         for rnd in range(max_rounds):
             if rnd > 0 and await self._is_blocked():
                 if ordered:
-                    logger.warning("Блокировка после %d товаров", len(ordered))
+                    logger.warning("Blocked after %d products", len(ordered))
                     break
-                raise OzonAccessError("Блокировка при загрузке выдачи")
+                raise OzonAccessError("Blocked while loading search results")
 
             for item in await self._extract_from_listing():
                 url = self._normalize_url(item.get("href", ""))
@@ -477,7 +508,7 @@ class OzonParser:
         return ordered[:limit]
 
     async def _parse_product_page(self, url: str, listing: dict, position: int) -> ProductResult:
-        logger.info("[%d] Карточка: %s", position, url)
+        logger.info("[%d] Product page: %s", position, url)
         title = listing.get("title") or "Без названия"
         price = listing.get("price")
         image = listing.get("image")
@@ -532,7 +563,7 @@ class OzonParser:
         except OzonAccessError:
             raise
         except Exception as exc:
-            logger.warning("Ошибка карточки %s: %s", url, exc)
+            logger.warning("Product page error %s: %s", url, exc)
 
         return ProductResult(
             title=str(title),
@@ -552,12 +583,12 @@ class OzonParser:
         batch_size: int = 4,
     ) -> list[ProductResult]:
         if fetch_details and limit <= batch_size * 2:
-            raise ValueError(f"Требуется n > 2*m: n={limit}, m={batch_size}")
+            raise ValueError(f"Requires n > 2*m: n={limit}, m={batch_size}")
 
         await self.search(query)
         listing_items = await self.collect_products(limit)
         if not listing_items:
-            raise OzonAccessError("Товары в выдаче не найдены")
+            raise OzonAccessError("No products found in search results")
 
         if not fetch_details:
             return [
@@ -578,7 +609,7 @@ class OzonParser:
             await asyncio.sleep(random.uniform(0.05, 0.1))
             if pos > 1 and (pos - 1) % batch_size == 0:
                 pause = random.uniform(5, 10)
-                logger.info("Пауза после %d товаров: %.1f с", batch_size, pause)
+                logger.info("Pause after %d products: %.1f s", batch_size, pause)
                 await asyncio.sleep(pause)
             results.append(await self._parse_product_page(item["url"], item, pos))
         return results

@@ -1,33 +1,20 @@
 from __future__ import annotations
 
-import _bootstrap  # noqa: F401
-
 import asyncio
 import json
-import logging
 import os
 import random
 import sys
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from pathlib import Path
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
-from playwright.async_api import BrowserContext, Page
+from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
-from cloak_browser import (
-    CloakSessionConfig,
-    close_cloak_session,
-    new_pool_profile_dir,
-    open_cloak_session,
-)
-from config import yandex_search_settings
 from notify import notify_captcha
-from proxy_bridge import bridge_manager
 from query_rewrite import rewrite_query
-
-logger = logging.getLogger(__name__)
 
 YA_RU_URL = "https://ya.ru/"
 COOKIES_PATH = Path(__file__).resolve().parent.parent / "yandex_cookies.json"
@@ -40,14 +27,28 @@ PAGER_NEXT_SELECTORS = (
 )
 MAX_PAGER_CLICKS = 1
 
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/122.0.0.0 Safari/537.36"
+)
 
-def _resolve_headless() -> bool:
-    env = os.getenv("CLOAK_HEADLESS") or os.getenv("PLAYWRIGHT_HEADLESS")
-    if env is not None:
-        return env.lower() in {"1", "true", "yes"}
-    return yandex_search_settings.headless
+PROXIES = [
+    "http://qJl9qiKZnJ:TUx3MBeLrU@185.200.188.100:41403",
+    "http://yXEwruw6Sk:9zN5auC9x5@103.82.103.157:58020",
+    "http://yf3HaMfY7U:MdGUgUkVKs@103.127.77.179:62868",
+    "http://CryQV1c3lo:pjXmuWtdeh@103.82.103.17:59750",
+    "http://DvYemkIajY:uoSe6oN3RQ@45.158.198.88:40172",
+    "http://YHMI2bDrbg:jwaAI5v6IS@45.132.252.133:53570",
+    "http://m8IY2bBm6i:F1O2ykVyiu@45.154.247.22:63275",
+    "http://NaTLKpP86D:b35iXcQ25L@103.82.103.253:47798",
+    "http://Z7f0lVoTgu:jyMDFnmlqs@45.132.252.17:20890",
+    "http://Jls7tshfC7:yiESYD0iJt@193.168.224.143:51312",
+]
 
+random.shuffle(PROXIES)
 
+PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() in {"1", "true", "yes"}
 MACBOOK = os.getenv("MACBOOK", "false").lower() in {"1", "true", "yes"}
 CAPTCHA_WAIT_TIMEOUT_MS = int(os.getenv("CAPTCHA_WAIT_TIMEOUT_MS", "1800000"))
 HEADLESS_CAPTCHA_WAIT_MS = int(os.getenv("HEADLESS_CAPTCHA_WAIT_MS", "120000"))
@@ -65,19 +66,27 @@ _COOKIE_STRIP_KEYS = (
     "session",
 )
 
+_proxy_last_used: dict[str, float] = {}
 next_request_time: float = 0.0
 _session: YandexBrowserSession | None = None
 
-speed_factor = 0.5
+pager_speed_factor = 0.7
+scroll_speed_factor = 0.5
+type_speed_factor = 0.3
 
-PAGER_TIME_SLEEP_SECONDS = (10 * speed_factor, 20 * speed_factor)
-SCROLL_TARGET_DEPTH_FRACTION = (0.55 * speed_factor, 0.95 * speed_factor)
-SCROLL_BACK_UP_CHANCE = 0.12 * speed_factor
-SCROLL_BACK_UP_VIEWPORT_FRACTION = (0.05 * speed_factor, 0.2 * speed_factor)
-SCROLL_DOWN_VIEWPORT_FRACTION = (0.12 * speed_factor, 0.5 * speed_factor)
-SCROLL_STEP_PAUSE_SECONDS = (0.08 * speed_factor, 0.35 * speed_factor)
-SCROLL_LONG_PAUSE_CHANCE = 0.2 * speed_factor
-SCROLL_LONG_PAUSE_SECONDS = (0.25 * speed_factor, 0.85 * speed_factor)
+PAGER_TIME_SLEEP_SECONDS = (10 * pager_speed_factor, 20 * pager_speed_factor)
+SCROLL_TARGET_DEPTH_FRACTION = (0.55 * scroll_speed_factor, 0.95 * scroll_speed_factor)
+SCROLL_BACK_UP_CHANCE = 0.12 * scroll_speed_factor
+SCROLL_BACK_UP_VIEWPORT_FRACTION = (0.05 * scroll_speed_factor, 0.2 * scroll_speed_factor)
+SCROLL_DOWN_VIEWPORT_FRACTION = (0.12 * scroll_speed_factor, 0.5 * scroll_speed_factor)
+SCROLL_STEP_PAUSE_SECONDS = (0.08 * scroll_speed_factor, 0.35 * scroll_speed_factor)
+SCROLL_LONG_PAUSE_CHANCE = 0.2 * scroll_speed_factor
+SCROLL_LONG_PAUSE_SECONDS = (0.25 * scroll_speed_factor, 0.85 * scroll_speed_factor)
+TYPE_SPACE_DELAY_MS = (int(40 * type_speed_factor), int(110 * type_speed_factor))
+TYPE_SPACE_PAUSE_SECONDS = (0.05 * type_speed_factor, 0.25 * type_speed_factor)
+TYPE_CHUNK_DELAY_MS = (int(60 * type_speed_factor), int(180 * type_speed_factor))
+TYPE_CHUNK_PAUSE_SECONDS = (0.15 * type_speed_factor, 0.55 * type_speed_factor)
+TYPE_FINISH_PAUSE_SECONDS = (1 * type_speed_factor, 2 * type_speed_factor)
 
 def load_yandex_cookies(path: Path = COOKIES_PATH) -> list[dict]:
     if not path.exists():
@@ -96,15 +105,29 @@ def load_yandex_cookies(path: Path = COOKIES_PATH) -> list[dict]:
     return cookies
 
 
-def _proxy_log_label(proxy_url: str | None) -> str:
-    if not proxy_url:
-        return "none"
-    parsed = urlparse(proxy_url if "://" in proxy_url else f"socks5://{proxy_url}")
-    host = parsed.hostname or "?"
-    port = f":{parsed.port}" if parsed.port else ""
+def _pick_proxy(proxies: str | Sequence[str]) -> str:
+    if isinstance(proxies, str):
+        _proxy_last_used[proxies] = time.monotonic()
+        return proxies
+
+    if not proxies:
+        raise ValueError("proxies list is empty")
+
+    proxy = min(proxies, key=lambda p: _proxy_last_used.get(p, 0.0))
+    _proxy_last_used[proxy] = time.monotonic()
+    return proxy
+
+
+def _parse_proxy(proxy_url: str) -> dict[str, str]:
+    parsed = urlparse(proxy_url)
+    config: dict[str, str] = {
+        "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
+    }
     if parsed.username:
-        return f"{parsed.scheme}://***@{host}{port}"
-    return f"{parsed.scheme}://{host}{port}"
+        config["username"] = parsed.username
+    if parsed.password:
+        config["password"] = parsed.password
+    return config
 
 
 class YandexCaptchaError(RuntimeError):
@@ -117,162 +140,112 @@ def set_captcha_wait_callback(callback: Callable[[], Awaitable[None]] | None) ->
 
 
 async def _is_captcha_page(page: Page) -> bool:
-    url = page.url.lower()
-    if "showcaptcha" in url or "checkcaptcha" in url:
+    if "checkcaptcha" in page.url:
         return True
-    if await page.locator('[data-testid="checkbox-captcha"]').count():
-        return True
-    if await page.locator('form[action*="checkcaptcha"]').count():
-        return True
-    heading = page.locator("h1").filter(has_text="робот")
-    return bool(await heading.count())
+    return bool(await page.locator('h1:has-text("робот")').count())
 
 
 def _captcha_wait_timeout_ms() -> int:
-    if MACBOOK and sys.platform == "darwin" and not _resolve_headless():
+    if MACBOOK and sys.platform == "darwin" and not PLAYWRIGHT_HEADLESS:
         return CAPTCHA_WAIT_TIMEOUT_MS
     return HEADLESS_CAPTCHA_WAIT_MS
 
 
-_HEADLESS_CAPTCHA_HINT = (
-    "Yandex showed a captcha but CloakBrowser runs headless. "
-    "Set yandex_search_settings.headless: false in settings.yaml "
-    "(or MACBOOK=true and CLOAK_HEADLESS=false in .env), solve captcha in the "
-    "browser window, and refresh yandex_cookies.json from the same SOCKS5 proxy."
-)
-
-
-async def _wait_until_captcha_cleared(page: Page) -> None:
-    if not await _is_captcha_page(page):
-        return
-
-    notify_captcha()
-    if _resolve_headless():
-        raise YandexCaptchaError(_HEADLESS_CAPTCHA_HINT)
-
-    if _captcha_wait_callback is not None:
-        await _captcha_wait_callback()
-
-    deadline = time.monotonic() + _captcha_wait_timeout_ms() / 1000
-    while time.monotonic() < deadline:
-        if not await _is_captcha_page(page):
-            return
-        await asyncio.sleep(0.5)
-
-    raise YandexCaptchaError(
-        "Timed out waiting for captcha to be solved in the browser window",
-    )
-
-
-async def _wait_for_search_results(page: Page, *, after_captcha: bool) -> None:
-    timeout_ms = _captcha_wait_timeout_ms() if after_captcha else 150_000
+async def _wait_for_search_results(page: Page, *, captcha_detected: bool) -> None:
+    timeout_ms = _captcha_wait_timeout_ms() if captcha_detected else 150_000
     try:
         await page.wait_for_selector(SEARCH_RESULTS_SELECTOR, timeout=timeout_ms)
     except Exception as error:
-        if after_captcha:
-            msg = "Timed out waiting for Yandex SERP after captcha"
-        else:
-            msg = "Timed out waiting for Yandex search results"
-        raise YandexCaptchaError(msg) from error
+        raise YandexCaptchaError("Timed out waiting for Yandex search results after captcha") from error
 
 
 class YandexBrowserSession:
     def __init__(
         self,
         cookies_path: Path = COOKIES_PATH,
-        proxy: str | None = None,
+        proxies: Sequence[str] = PROXIES,
     ) -> None:
         self._cookies_path = cookies_path
-        self._proxy = proxy if proxy is not None else yandex_search_settings.resolve_proxy()
+        self._proxies = proxies
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
         self._context: BrowserContext | None = None
-        self._bridge_upstream: str | None = None
-        self._profile_dir = new_pool_profile_dir("yandex")
         self._home_page: Page | None = None
 
     async def start(self) -> None:
         if self._context is not None:
             return
 
+        proxy = _parse_proxy(_pick_proxy(self._proxies))
         cookies = load_yandex_cookies(self._cookies_path)
-        label = _proxy_log_label(self._proxy)
-        logger.info("Yandex search CloakBrowser starting (proxy=%s)", label)
-        config = CloakSessionConfig(
-            headless=_resolve_headless(),
-            proxy=self._proxy,
-            geoip=yandex_search_settings.geoip and bool(self._proxy),
-            humanize=yandex_search_settings.humanize,
-            user_data_dir=self._profile_dir,
+
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(
+            headless=PLAYWRIGHT_HEADLESS,
+            proxy=proxy,
+            args=["--disable-blink-features=AutomationControlled"],
         )
-        self._context, self._home_page, self._bridge_upstream = await open_cloak_session(config)
+        self._context = await self._browser.new_context(
+            locale="ru-RU",
+            user_agent=USER_AGENT,
+            viewport={"width": 1440, "height": 900},
+        )
+        await self._context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+        )
         await self._context.add_cookies(cookies)
+        self._home_page = await self._context.new_page()
         await self._home_page.goto(YA_RU_URL, wait_until="domcontentloaded", timeout=30_000)
-        logger.info("Yandex search CloakBrowser ready (proxy=%s)", label)
 
     async def stop(self) -> None:
         self._home_page = None
-        await close_cloak_session(
-            self._context,
-            bridge_upstream=self._bridge_upstream,
-        )
-        self._context = None
-        self._bridge_upstream = None
+        if self._context is not None:
+            await self._context.close()
+            self._context = None
+        if self._browser is not None:
+            await self._browser.close()
+            self._browser = None
+        if self._playwright is not None:
+            await self._playwright.stop()
+            self._playwright = None
 
-    async def _open_search_tab(self) -> Page:
+    async def new_tab(self) -> Page:
         if self._context is None:
             raise RuntimeError("Browser session is not started")
         return await self._context.new_page()
+
+    async def _open_search_tab(self) -> Page:
+        return await self.new_tab()
 
     async def search(self, query: str, region: str = "санкт-петербург") -> AsyncGenerator[list[dict], None]:
         if self._context is None:
             raise RuntimeError("Browser session is not started")
 
         rewritten_query = rewrite_query(query, region)
-        page = self._home_page or await self._open_search_tab()
-        own_tab = page is not self._home_page
+        page = await self._open_search_tab()
         try:
-            serp_index = 0
-            started = time.perf_counter()
             await _submit_search(page, rewritten_query)
-            results = _parse_results(await _current_soup(page))
-            serp_index += 1
-            logger.info(
-                "yandex serp page %d: %.2fs, %d items (query=%r)",
-                serp_index,
-                time.perf_counter() - started,
-                len(results),
-                rewritten_query,
-            )
-            yield results
+            yield _parse_results(await _current_soup(page))
 
             for _ in range(MAX_PAGER_CLICKS):
                 try:
-                    pager_started = time.perf_counter()
                     if not await _click_next_page(page):
                         break
                 except YandexCaptchaError as error:
-                    logger.warning("%s", error)
+                    print(error)
                     break
-                results = _parse_results(await _current_soup(page))
-                serp_index += 1
-                logger.info(
-                    "yandex serp page %d: %.2fs, %d items",
-                    serp_index,
-                    time.perf_counter() - pager_started,
-                    len(results),
-                )
-                yield results
+                yield _parse_results(await _current_soup(page))
         finally:
-            if own_tab:
-                await page.close()
+            await page.close()
 
 
 async def init_browser_session(
     cookies_path: Path = COOKIES_PATH,
-    proxy: str | None = None,
+    proxies: Sequence[str] = PROXIES,
 ) -> YandexBrowserSession:
     global _session
     if _session is None:
-        _session = YandexBrowserSession(cookies_path=cookies_path, proxy=proxy)
+        _session = YandexBrowserSession(cookies_path=cookies_path, proxies=proxies)
         await _session.start()
     return _session
 
@@ -282,7 +255,6 @@ async def close_browser_session() -> None:
     if _session is not None:
         await _session.stop()
         _session = None
-    await bridge_manager.shutdown_all()
 
 
 def get_browser_session() -> YandexBrowserSession:
@@ -299,8 +271,17 @@ async def _respect_rate_limit() -> None:
         await asyncio.sleep(random.uniform(0.1, 1))
 
 
-async def _wait_for_results(page: Page, *, after_captcha: bool) -> None:
-    await _wait_for_search_results(page, after_captcha=after_captcha)
+async def _handle_captcha(page: Page) -> bool:
+    captcha_detected = await _is_captcha_page(page)
+    if captcha_detected:
+        notify_captcha()
+        if _captcha_wait_callback is not None:
+            await _captcha_wait_callback()
+    return captcha_detected
+
+
+async def _wait_for_results(page: Page, *, captcha_detected: bool) -> None:
+    await _wait_for_search_results(page, captcha_detected=captcha_detected)
     await _scroll_page_chaotically(page)
     global next_request_time
     next_request_time = time.monotonic() + random.uniform(*PAGER_TIME_SLEEP_SECONDS)
@@ -335,16 +316,19 @@ async def _type_query_naturally(search_input, query: str) -> None:
 
     for index, chunk in enumerate(chunks):
         if index > 0:
-            await search_input.press_sequentially(" ", delay=random.randint(40, 110))
-            await _human_pause(0.05, 0.25)
+            await search_input.press_sequentially(
+                " ",
+                delay=random.randint(*TYPE_SPACE_DELAY_MS),
+            )
+            await _human_pause(*TYPE_SPACE_PAUSE_SECONDS)
         await search_input.press_sequentially(
             chunk,
-            delay=random.randint(60, 180),
+            delay=random.randint(*TYPE_CHUNK_DELAY_MS),
         )
         if index < len(chunks) - 1:
-            await _human_pause(0.15, 0.55)
+            await _human_pause(*TYPE_CHUNK_PAUSE_SECONDS)
 
-    await _human_pause(1, 2)
+    await _human_pause(*TYPE_FINISH_PAUSE_SECONDS)
 
 
 async def _scroll_page_chaotically(page: Page) -> None:
@@ -391,10 +375,11 @@ async def _scroll_page_chaotically(page: Page) -> None:
 
 async def _submit_search(page: Page, query: str) -> None:
     await _respect_rate_limit()
-    if YA_RU_URL not in page.url:
-        await page.goto(YA_RU_URL, wait_until="domcontentloaded", timeout=30_000)
+    await page.goto(YA_RU_URL, wait_until="domcontentloaded", timeout=30_000)
 
-    await _wait_until_captcha_cleared(page)
+    captcha_detected = await _handle_captcha(page)
+    if captcha_detected:
+        await _wait_for_search_results(page, captcha_detected=True)
 
     search_input = page.locator(SEARCH_INPUT_SELECTOR)
     await search_input.wait_for(state="visible", timeout=30_000)
@@ -404,8 +389,8 @@ async def _submit_search(page: Page, query: str) -> None:
     await search_input.press("Enter")
     await _human_pause(0.5, 1.2)
 
-    await _wait_until_captcha_cleared(page)
-    await _wait_for_results(page, after_captcha=False)
+    captcha_detected = await _handle_captcha(page)
+    await _wait_for_results(page, captcha_detected=captcha_detected)
 
 
 async def _find_next_page_link(page: Page):
@@ -424,8 +409,8 @@ async def _click_next_page(page: Page) -> bool:
     await _respect_rate_limit()
     await next_link.click()
 
-    await _wait_until_captcha_cleared(page)
-    await _wait_for_results(page, after_captcha=False)
+    captcha_detected = await _handle_captcha(page)
+    await _wait_for_results(page, captcha_detected=captcha_detected)
     return True
 
 
@@ -474,26 +459,33 @@ def _parse_results(soup: BeautifulSoup) -> list[dict]:
     return results
 
 
-def _hostname_shop_fields(products: list[dict]) -> tuple[str | None, str | None]:
+def _hostname_shop_fields(
+    products: list[dict],
+) -> tuple[str | None, str | None, str | None]:
     rating = None
     reviews = None
+    delivery = None
     for product in products:
         if rating is None:
             rating = product.get("rating")
         if reviews is None:
             reviews = product.get("reviews")
-        if rating is not None and reviews is not None:
+        if delivery is None:
+            delivery = product.get("delivery")
+        if rating is not None and reviews is not None and delivery is not None:
             break
-    return rating, reviews
+    return rating, reviews, delivery
 
 
 def _hostname_group(hostname: str, products: list[dict]) -> dict:
-    rating, reviews = _hostname_shop_fields(products)
+    rating, reviews, delivery = _hostname_shop_fields(products)
     group: dict = {"hostname": hostname, "products": products}
     if rating is not None:
         group["rating"] = rating
     if reviews is not None:
         group["reviews"] = reviews
+    if delivery is not None:
+        group["delivery"] = delivery
     return group
 
 

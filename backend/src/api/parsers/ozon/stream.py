@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import AsyncIterator
 
 from src.api.parsers.geocoder import resolve_ozon_city
@@ -61,9 +60,6 @@ async def iter_ozon_search(
     detail_batch_size = max(1, (limit - 1) // 2) if limit > 1 else 1
     target_count = skip + limit
 
-    stream_started = time.perf_counter()
-    phase_started = stream_started
-
     logger.info(
         "Ozon stream start: query=%r limit=%d skip=%d location=%r fetch_details=%s",
         query,
@@ -92,15 +88,15 @@ async def iter_ozon_search(
             yield pending
         return
 
-    city = resolve_ozon_city(location)
-    if city != "Москва":
-        await parser._apply_delivery_city(city)
-        logger.info("Ozon city phase %.2fs", time.perf_counter() - phase_started)
-        phase_started = time.perf_counter()
+    if parser.keep_alive:
+        try:
+            await parser.warmup_session()
+        except Exception as exc:
+            logger.warning("Ozon warmup before search failed: %s", exc)
 
+    city = resolve_ozon_city(location)
+    await parser._apply_delivery_city(city)
     await parser.search(query)
-    logger.info("Ozon search phase %.2fs", time.perf_counter() - phase_started)
-    phase_started = time.perf_counter()
 
     skipped = 0
     emitted = 0
@@ -126,12 +122,3 @@ async def iter_ozon_search(
 
     if pending:
         yield pending
-
-    logger.info(
-        "Ozon stream done: query=%r emitted=%d limit=%d in %.2fs (collect %.2fs)",
-        query,
-        emitted,
-        limit,
-        time.perf_counter() - stream_started,
-        time.perf_counter() - phase_started,
-    )

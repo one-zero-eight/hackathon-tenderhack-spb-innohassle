@@ -5,7 +5,6 @@ import json
 import logging
 import random
 import re
-import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from urllib.parse import quote
@@ -356,29 +355,19 @@ class OzonParser:
 
     def _serp_wait_timeout(self) -> float:
         base = float(self.element_wait_timeout)
-        if self.keep_alive and not self.slow_mode:
-            return min(max(base, 4.0), 12.0)
+        if self.keep_alive:
+            return min(max(base, 10.0), 15.0)
         return min(max(base, 10.0), 15.0)
 
     async def _wait_serp_ready(self, timeout: float) -> None:
         await wait_for_function(self._p, SERP_PRODUCTS_READY, timeout_sec=timeout, poll_interval_sec=0.15)
 
     async def _wait_serp_settled(self) -> None:
-        timeout_ms = 5_000 if self.keep_alive and not self.slow_mode else 8_000
         try:
-            await self._p.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+            await self._p.wait_for_load_state("domcontentloaded", timeout=8_000)
         except Exception:
             pass
-        if self.keep_alive and not self.slow_mode:
-            await self._sleep(0.05, 0.12)
-        else:
-            await self._sleep(0.15, 0.3)
-
-    def _is_on_ozon(self) -> bool:
-        try:
-            return "ozon.ru" in (self._p.url or "")
-        except Exception:
-            return False
+        await self._sleep(0.15, 0.3)
 
     async def _apply_delivery_city(self, city: str) -> None:
         if city == "Москва":
@@ -476,20 +465,14 @@ class OzonParser:
 
     async def _search_via_input(self, query: str) -> None:
         serp_timeout = self._serp_wait_timeout()
-        use_fast = self.keep_alive and not self.slow_mode
-        if not self._is_on_ozon():
-            await self._goto(OZON_HOME, fast=use_fast)
+        await self._goto(OZON_HOME, fast=False)
         await self._dismiss_overlays()
         if await self._is_blocked():
             raise OzonAccessError(f"Ozon ограничил доступ ({await self._page_context()})")
         if not await self._try_fill_search_input(query):
             raise OzonAccessError("Поле поиска не найдено")
-        if use_fast:
-            await self._sleep(0.25, 0.45)
-        else:
-            await self._sleep(0.5, 0.9)
+        await self._sleep(0.5, 0.9)
         await self._wait_serp_ready(serp_timeout)
-        await self._wait_serp_settled()
 
     async def _scroll_step(self) -> None:
         await evaluate(self._p, SCROLL_STEP_JS)
@@ -538,22 +521,12 @@ class OzonParser:
         rounds = (limit + items_per_scroll - 1) // items_per_scroll + 2
         return max(3, min(rounds, 30))
 
-    def _listing_from_composer(self, url: str, composer: dict) -> dict:
-        return {
-            "url": url,
-            "title": composer.get("title") or "Без названия",
-            "price": composer.get("price"),
-            "originalPrice": composer.get("originalPrice"),
-            "image": composer.get("image"),
-        }
-
     async def collect_products_batched(
         self,
         limit: int,
         *,
         batch_size: int = 10,
     ) -> AsyncIterator[list[dict]]:
-        collect_started = time.perf_counter()
         ordered: list[dict] = []
         seen: set[str] = set()
         stale = 0
@@ -561,15 +534,15 @@ class OzonParser:
         last_sent = 0
         max_rounds = self._scroll_rounds_for_limit(limit)
 
+        logger.info("Прокрутка выдачи для %d товаров (до %d раундов)...", limit, max_rounds)
+
         await self._wait_serp_settled()
 
         composer_by_url: dict[str, dict] = {}
-        composer_started = time.perf_counter()
         try:
             composer_by_url = await self._fetch_composer_by_url()
         except Exception as exc:
             logger.warning("Ozon composer-api fetch failed: %s", exc)
-        composer_sec = time.perf_counter() - composer_started
 
         def emit_pending(force: bool = False) -> list[list[dict]]:
             nonlocal last_sent
@@ -583,32 +556,6 @@ class OzonParser:
                 last_sent = len(ordered)
                 batches.append(chunk)
             return batches
-
-        if len(composer_by_url) >= limit:
-            for url, composer in composer_by_url.items():
-                if url in seen:
-                    continue
-                seen.add(url)
-                ordered.append(self._listing_from_composer(url, composer))
-                if len(ordered) >= limit:
-                    break
-            for batch in emit_pending(force=True):
-                yield batch
-            logger.info(
-                "Ozon collect: composer-only %d/%d items in %.2fs (composer-api %.2fs, no scroll)",
-                len(ordered),
-                limit,
-                time.perf_counter() - collect_started,
-                composer_sec,
-            )
-            return
-
-        logger.info(
-            "Ozon collect: DOM scroll for %d items (composer had %d, up to %d rounds)",
-            limit,
-            len(composer_by_url),
-            max_rounds,
-        )
 
         for rnd in range(max_rounds):
             if rnd > 0 and await self._is_blocked():
@@ -634,7 +581,15 @@ class OzonParser:
                     if url in seen:
                         continue
                     seen.add(url)
-                    ordered.append(self._listing_from_composer(url, composer))
+                    ordered.append(
+                        {
+                            "url": url,
+                            "title": composer.get("title") or "Без названия",
+                            "price": composer.get("price"),
+                            "originalPrice": composer.get("originalPrice"),
+                            "image": composer.get("image"),
+                        }
+                    )
                     if len(ordered) >= limit:
                         for batch in emit_pending(force=True):
                             yield batch
@@ -660,15 +615,6 @@ class OzonParser:
 
         for batch in emit_pending(force=True):
             yield batch
-
-        logger.info(
-            "Ozon collect: finished %d/%d items in %.2fs (composer-api %.2fs, %d scroll rounds)",
-            len(ordered),
-            limit,
-            time.perf_counter() - collect_started,
-            composer_sec,
-            max_rounds,
-        )
 
     async def collect_products(self, limit: int) -> list[dict]:
         items: list[dict] = []

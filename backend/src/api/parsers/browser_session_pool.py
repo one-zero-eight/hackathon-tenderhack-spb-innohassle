@@ -5,7 +5,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
-from src.api.parsers.ozon.parser import OzonSeleniumParser
+from src.api.parsers.ozon.parser import OzonParser
 from src.api.parsers.ozon.run import run_ozon_search
 from src.api.parsers.wildberries.parser import WildberriesSeleniumParser
 from src.config import browser_pool_settings, ozon_settings, settings_dir, wildberries_settings
@@ -16,7 +16,7 @@ T = TypeVar("T")
 
 
 class _ParserSlotPool[T]:
-    """N независимых Chrome; на запрос — свободный слот из очереди."""
+    """N independent browser sessions; one free slot per request."""
 
     def __init__(self, *, name: str, size: int, create: Callable[[], Awaitable[T]]) -> None:
         self._name = name
@@ -41,7 +41,7 @@ class _ParserSlotPool[T]:
                 parser = await self._create()
                 self._parsers.append(parser)
                 self._available.put_nowait(index)
-                logger.info("%s browser slot %d/%d ready", self._name, index + 1, self._size)
+                logger.info("%s slot %d/%d ready", self._name, index + 1, self._size)
             self._initialized = True
 
     async def run(self, fn: Callable[[T], Awaitable[object]]) -> object:
@@ -54,13 +54,18 @@ class _ParserSlotPool[T]:
 
     async def shutdown(self) -> None:
         for index, parser in enumerate(self._parsers):
+            close = getattr(parser, "close", None)
+            if close:
+                try:
+                    await close(force=True)
+                except Exception as exc:
+                    logger.warning("%s slot %d close failed: %s", self._name, index, exc)
             driver = getattr(parser, "driver", None)
             if driver:
                 try:
                     await driver.quit()
                 except Exception as exc:
-                    logger.warning("%s slot %d quit failed: %s", self._name, index, exc)
-                parser.driver = None  # type: ignore[attr-defined]
+                    logger.warning("%s slot %d driver quit failed: %s", self._name, index, exc)
         self._parsers.clear()
         while not self._available.empty():
             self._available.get_nowait()
@@ -68,7 +73,7 @@ class _ParserSlotPool[T]:
 
 
 class BrowserSessionPool:
-    """Пул Chrome-сессий WB/Ozon (по несколько на маркетплейс)."""
+    """Browser pool: Wildberries (selenium-driverless) + Ozon (CloakBrowser)."""
 
     def __init__(self) -> None:
         self._wb = _ParserSlotPool(
@@ -116,7 +121,7 @@ class BrowserSessionPool:
             await self._ozon.run(warmup_ozon)  # type: ignore[arg-type]
 
         logger.info(
-            "Browser session pool prewarmed (WB slots=%d, Ozon slots=%d)",
+            "Browser pool prewarmed (WB slots=%d, Ozon CloakBrowser slots=%d)",
             self._wb.size,
             self._ozon.size,
         )
@@ -155,13 +160,14 @@ class BrowserSessionPool:
         await parser.start()
         return parser
 
-    async def _create_ozon_parser(self) -> OzonSeleniumParser:
+    async def _create_ozon_parser(self) -> OzonParser:
         cookies_path = ozon_settings.resolve_cookies_path(settings_dir=settings_dir)
-        parser = OzonSeleniumParser(
+        parser = OzonParser(
             headless=ozon_settings.headless,
             slow_mode=ozon_settings.slow,
             cookies_file=cookies_path,
             proxy=ozon_settings.resolve_proxy(),
+            geoip=bool(ozon_settings.resolve_proxy()),
             page_load_timeout=ozon_settings.page_load_timeout,
             element_wait_timeout=ozon_settings.element_wait_timeout,
             page_load_retries=ozon_settings.page_load_retries,

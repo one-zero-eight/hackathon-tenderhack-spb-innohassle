@@ -14,6 +14,8 @@ args = sys.argv[1:]
 extended_args = [
     "src.api.app:app",
     "--use-colors",
+    "--loop",
+    "asyncio",
     "--proxy-headers",
     "--forwarded-allow-ips=*",
     *args,

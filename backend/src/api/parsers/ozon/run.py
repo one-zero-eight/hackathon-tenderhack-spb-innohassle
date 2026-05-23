@@ -1,14 +1,14 @@
 import logging
-import re
 
 from src.api.parsers.ozon.exceptions import OzonAccessError
-from src.api.parsers.ozon.parser import OzonSeleniumParser
+from src.api.parsers.ozon.parser import OzonParser
+from src.api.parsers.price_utils import parse_rub_price
 from src.config import ozon_settings
 
 logger = logging.getLogger(__name__)
 
 
-async def run_ozon_search(parser: OzonSeleniumParser, query: str, limit: int) -> list[dict]:
+async def run_ozon_search(parser: OzonParser, query: str, limit: int) -> list[dict]:
     fetch_details = ozon_settings.fetch_details
     batch_size = max(1, (limit - 1) // 2) if limit > 1 else 1
 
@@ -31,11 +31,14 @@ async def run_ozon_search(parser: OzonSeleniumParser, query: str, limit: int) ->
 
     results = []
     for product in raw_results[:limit]:
-        sale_price = _parse_price(product.price) or _parse_price(product.title)
+        sale_price = parse_rub_price(product.price)
+        original_price = parse_rub_price(product.original_price)
         results.append(
             {
                 "name": product.title,
+                "brand": product.brand,
                 "sale_price": sale_price,
+                "original_price": original_price,
                 "url": product.url,
                 "image_url": product.image_url,
                 "source": "Ozon",
@@ -50,13 +53,3 @@ async def run_ozon_search(parser: OzonSeleniumParser, query: str, limit: int) ->
         sum(1 for item in results if item.get("sale_price") is not None),
     )
     return results
-
-
-def _parse_price(price: str | None) -> float | None:
-    if not price:
-        return None
-    digits = re.sub(r"[^\d]", "", price.replace("\u00a0", " ").replace(" ", ""))
-    if not digits:
-        return None
-    value = float(digits)
-    return value if value > 0 else None

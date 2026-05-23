@@ -36,6 +36,8 @@ class AuthSettings(BaseModel):
 class OzonSettings(BaseModel):
     headless: bool = True
     "Run Chrome without a visible window"
+    geoip: bool = True
+    humanize: bool = False
     slow: bool = False
     "Use longer pauses during warmup and scrolling to reduce blocking risk"
     proxy: str | None = None
@@ -59,7 +61,10 @@ class OzonSettings(BaseModel):
             raw = random.choice(self.proxies)
         if not raw:
             return None
-        return raw if "://" in raw else f"http://{raw}"
+        value = raw.strip()
+        if "://" not in value:
+            return f"socks5://{value}"
+        return value
 
     def resolve_cookies_path(self, *, settings_dir: Path | None = None) -> Path | None:
         if not self.cookies_file:
@@ -97,6 +102,32 @@ class BrowserPoolSettings(BaseModel):
     "Number of parallel Chrome sessions for Ozon"
 
 
+class WildberriesSettings(BaseModel):
+    headless: bool = True
+    "Run Chrome without a visible window"
+    chrome_executable_path: str | None = None
+    "Path to Chrome/Chromium executable"
+    proxy: str | None = None
+    proxies: list[str] = Field(default_factory=list)
+    page_load_timeout: int = 20
+    "Max seconds to wait for Wildberries page load"
+    element_wait_timeout: int = 8
+    "Max seconds to wait for product cards in search results"
+    page_load_retries: int = 1
+    "How many times to retry opening search after anti-bot or empty page"
+
+    def resolve_proxy(self) -> str | None:
+        raw = self.proxy
+        if not raw and self.proxies:
+            raw = random.choice(self.proxies)
+        if not raw:
+            return None
+        value = raw.strip()
+        if "://" not in value:
+            return f"socks5://{value}"
+        return value
+
+
 class YandexMarketSettings(BaseModel):
     proxy: str | None = None
     "SOCKS5 proxy for httpx: user:pass@host:port or socks5://user:pass@host:port"
@@ -104,6 +135,8 @@ class YandexMarketSettings(BaseModel):
     "SOCKS5 proxy pool; a random entry is used when proxy is not set"
     timeout: int = 30
     "httpx request timeout in seconds"
+    connect_timeout: int = 6
+    "httpx connect timeout in seconds"
     request_retries: int = Field(3, ge=1, le=6)
     "Retries on proxy/connect errors (RemoteProtocolError, timeouts)"
     warmup: bool = True
@@ -116,19 +149,6 @@ class YandexMarketSettings(BaseModel):
         if not raw:
             return None
         return _normalize_socks5_proxy_url(raw)
-
-
-class WildberriesSettings(BaseModel):
-    headless: bool = True
-    "Run Chrome without a visible window"
-    chrome_executable_path: str | None = None
-    "Path to Chrome/Chromium executable"
-    page_load_timeout: int = 20
-    "Max seconds to wait for Wildberries page load"
-    element_wait_timeout: int = 8
-    "Max seconds to wait for product cards in search results"
-    page_load_retries: int = 1
-    "How many times to retry opening search after anti-bot or empty page"
 
 
 class Settings(BaseModel):

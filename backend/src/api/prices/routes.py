@@ -1,49 +1,35 @@
 import asyncio
-import logging
 
 from fastapi import APIRouter
 from fastapi_derive_responses import AutoDeriveResponsesAPIRoute
 
 from src.api.parsers import parse_ozon_products, parse_wildberries_products, parse_yandex_market_products
-from src.api.parsers.spellcheck import spellcheck
 from src.schemas import MarketplacePriceResult, PriceSearchRequest, PriceSearchResponse, ProductPrice
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/prices", tags=["Prices"], route_class=AutoDeriveResponsesAPIRoute)
 
 
 @router.post("/search")
 async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
-    query = payload.query
-    fixed_query: str | None = None
-    if not payload.bypass_spellchecker:
-        checked_query = await asyncio.to_thread(spellcheck, payload.query)
-        if checked_query != payload.query:
-            fixed_query = checked_query
-            query = checked_query
-            logger.info("Spellcheck corrected search query: %r -> %r", payload.query, checked_query)
-
     yandex_result, wildberries_result, ozon_result = await asyncio.gather(
         parse_yandex_market_products(
-            query,
+            payload.query,
             payload.limit,
             payload.skip,
-            payload.location,
+            location=payload.location,
         ),
         parse_wildberries_products(
-            query,
+            payload.query,
             payload.limit,
             payload.skip,
-            payload.location,
+            location=payload.location,
         ),
-        parse_ozon_products(query, payload.limit),
+        parse_ozon_products(payload.query, payload.limit),
         return_exceptions=True,
     )
 
     return PriceSearchResponse(
         query=payload.query,
-        fixed_query=fixed_query,
         results=[
             _build_yandex_market_result(yandex_result),
             _build_wildberries_result(wildberries_result),
@@ -61,7 +47,7 @@ def _build_yandex_market_result(result: list[dict] | BaseException) -> Marketpla
         ProductPrice(
             source=source,
             name=item.get("name"),
-            brand=item.get("brand"),
+            brand=_optional_brand(item.get("brand")),
             price=float(item["sale_price"]),
             original_price=_optional_float(item.get("original_price")),
             url=_optional_str(item.get("url")),
@@ -82,11 +68,14 @@ def _build_ozon_result(result: list[dict] | BaseException) -> MarketplacePriceRe
         ProductPrice(
             source=source,
             name=item.get("name"),
+            brand=_optional_brand(item.get("brand")),
             price=_optional_float(item.get("sale_price")),
+            original_price=_optional_float(item.get("original_price")),
             url=_optional_str(item.get("url")),
             image_url=_optional_str(item.get("image_url")),
         )
         for item in result
+        if item.get("sale_price") is not None
     ]
     return MarketplacePriceResult(source=source, prices=prices)
 
@@ -100,7 +89,7 @@ def _build_wildberries_result(result: list[dict] | BaseException) -> Marketplace
         ProductPrice(
             source=source,
             name=item.get("name"),
-            brand=item.get("brand"),
+            brand=_optional_brand(item.get("brand")),
             price=float(item["sale_price"]),
             original_price=_optional_float(item.get("original_price")),
             url=_optional_str(item.get("url")),
@@ -110,6 +99,15 @@ def _build_wildberries_result(result: list[dict] | BaseException) -> Marketplace
         if item.get("sale_price") is not None
     ]
     return MarketplacePriceResult(source=source, prices=prices)
+
+
+def _optional_brand(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.upper() == "N/A":
+        return None
+    return text
 
 
 def _optional_float(value: object) -> float | None:

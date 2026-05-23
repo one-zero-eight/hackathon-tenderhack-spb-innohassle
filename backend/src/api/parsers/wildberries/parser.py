@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from urllib.parse import quote_plus
 
 from selenium_driverless.webdriver import Chrome
 
+from src.api.parsers.price_utils import parse_rub_price
 from src.api.parsers.wait import safe_execute_script, wait_for_script_true
 from src.api.parsers.wildberries.browser import create_driverless_driver
 from src.api.parsers.wildberries.exceptions import WildberriesAccessError
@@ -39,25 +39,46 @@ const pickAttr = (root, sel, attr) => {
   if (!el) return null;
   return el.getAttribute(attr) || null;
 };
+const pickPrice = (card) => {
+  const sels = [
+    "ins.price__lower-price",
+    ".price__lower-price",
+    ".product-card__price",
+    ".price__wrap",
+    "span[class*='price__lower']",
+    "span[class*='price']",
+  ];
+  for (const sel of sels) {
+    const el = card.querySelector(sel);
+    if (el) {
+      const t = el.innerText.trim();
+      if (/\\d/.test(t)) return t;
+    }
+  }
+  const m = (card.innerText || "").match(/(\\d[\\d\\s\\u00a0]*)\\s*₽/);
+  return m ? m[0].trim() : null;
+};
+const pickOriginalPrice = (card) => {
+  const el = card.querySelector(
+    "del, .price__old, .product-card__price-old, span[class*='price-old'], span[class*='old-price']"
+  );
+  if (!el) return null;
+  const t = el.innerText.trim();
+  return /\\d/.test(t) ? t : null;
+};
 const cards = document.querySelectorAll("article, .product-card, [data-nm-id]");
 const out = [];
 for (const card of cards) {
-  const priceText = pickText(
-    card,
-    ".price__lower-price, .price__wrap, .product-card__price, ins[class*='price'], span[class*='price']"
-  );
+  const priceText = pickPrice(card);
   const link = pickAttr(card, "a.product-card__link, a[href*='/catalog/']", "href");
   const imageUrl = pickAttr(card, "img", "src") || pickAttr(card, "img", "data-src");
-  let name = pickText(card, ".product-card__name, .goods-name");
+  let name = pickText(card, ".product-card__name, .goods-name, [class*='product-card__name']");
   if (name) name = name.replace(/^\\//, "").trim();
   out.push({
     name,
-    brand: pickText(card, ".product-card__brand, .brand-name"),
+    brand: pickText(card, ".product-card__brand, .brand-name, [class*='brand']"),
     priceText,
-    originalPriceText: pickText(
-      card,
-      "del, .price__wrap del, .product-card__price-old, span[class*='price-old']"
-    ),
+    originalPriceText: pickOriginalPrice(card),
     url: link,
     image_url: imageUrl,
   });
@@ -94,8 +115,8 @@ class WildberriesSeleniumParser:
     async def start(self) -> None:
         self.driver, self.user_agent = await create_driverless_driver(headless=self.headless)
 
-    async def close(self) -> None:
-        if self.keep_alive:
+    async def close(self, *, force: bool = False) -> None:
+        if self.keep_alive and not force:
             return
         if self.driver:
             await self.driver.quit()
@@ -243,16 +264,19 @@ class WildberriesSeleniumParser:
 
         products: list[dict] = []
         for item in raw:
-            sale_price = _parse_price(item.get("priceText"))
+            sale_price = parse_rub_price(item.get("priceText"))
             if sale_price is None:
                 continue
+            url = item.get("url")
+            if url and url.startswith("/"):
+                url = f"https://www.wildberries.ru{url}"
             products.append(
                 {
                     "name": item.get("name"),
                     "brand": _clean_text(item.get("brand")),
                     "sale_price": sale_price,
-                    "original_price": _parse_price(item.get("originalPriceText")),
-                    "url": item.get("url"),
+                    "original_price": parse_rub_price(item.get("originalPriceText")),
+                    "url": url,
                     "image_url": item.get("image_url"),
                     "source": "Wildberries",
                 }
@@ -279,14 +303,6 @@ class WildberriesSeleniumParser:
             len(products),
         )
         return products
-
-
-def _parse_price(value: str | None) -> int | None:
-    if not value:
-        return None
-    price_match = re.search(r"(\d[\d\s\u00a0]*)\s*₽", value)
-    clean_price = "".join(filter(str.isdigit, price_match.group(1) if price_match else value))
-    return int(clean_price) if clean_price else None
 
 
 def _clean_text(value: str | None) -> str | None:

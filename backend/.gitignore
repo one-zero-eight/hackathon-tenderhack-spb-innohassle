@@ -18,5 +18,8 @@ public.pem
 ### OS ###
 .DS_Store
 
+### CloakBrowser ###
+data/cloak-profiles/*
+
 ### Debug ###
 wb_error_debug.png

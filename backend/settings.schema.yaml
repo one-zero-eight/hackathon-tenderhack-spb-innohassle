@@ -55,11 +55,104 @@ $defs:
         type: integer
     title: AuthSettings
     type: object
+  BrowserPoolSettings:
+    properties:
+      wildberries_pool_size:
+        default: 2
+        maximum: 5
+        minimum: 1
+        title: Wildberries Pool Size
+        type: integer
+      ozon_pool_size:
+        default: 2
+        maximum: 5
+        minimum: 1
+        title: Ozon Pool Size
+        type: integer
+    title: BrowserPoolSettings
+    type: object
+  OzonSettings:
+    properties:
+      headless:
+        default: true
+        title: Headless
+        type: boolean
+      slow:
+        default: false
+        title: Slow
+        type: boolean
+      proxy:
+        anyOf:
+        - type: string
+        - type: 'null'
+        default: null
+        title: Proxy
+      proxies:
+        items:
+          type: string
+        title: Proxies
+        type: array
+      page_load_timeout:
+        default: 20
+        title: Page Load Timeout
+        type: integer
+      element_wait_timeout:
+        default: 8
+        title: Element Wait Timeout
+        type: integer
+      page_load_retries:
+        default: 1
+        title: Page Load Retries
+        type: integer
+      fetch_details:
+        default: false
+        title: Fetch Details
+        type: boolean
+      cookies_file:
+        anyOf:
+        - type: string
+        - type: 'null'
+        default: cookies.json
+        title: Cookies File
+    title: OzonSettings
+    type: object
+  WildberriesSettings:
+    properties:
+      headless:
+        default: true
+        title: Headless
+        type: boolean
+      chrome_executable_path:
+        anyOf:
+        - type: string
+        - type: 'null'
+        default: null
+        title: Chrome Executable Path
+      page_load_timeout:
+        default: 20
+        title: Page Load Timeout
+        type: integer
+      element_wait_timeout:
+        default: 8
+        title: Element Wait Timeout
+        type: integer
+      page_load_retries:
+        default: 1
+        title: Page Load Retries
+        type: integer
+    title: WildberriesSettings
+    type: object
 properties:
   api_settings:
     $ref: '#/$defs/ApiSettings'
   auth_settings:
     $ref: '#/$defs/AuthSettings'
+  ozon_settings:
+    $ref: '#/$defs/OzonSettings'
+  wildberries_settings:
+    $ref: '#/$defs/WildberriesSettings'
+  browser_pool_settings:
+    $ref: '#/$defs/BrowserPoolSettings'
 required:
 - api_settings
 - auth_settings

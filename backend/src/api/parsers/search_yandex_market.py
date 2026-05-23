@@ -1,110 +1,121 @@
 """
 Yandex Market Price Search Script
-Uses requests to fetch search page and parse embedded JSON-LD data.
+Uses httpx to fetch search page and parse embedded JSON-LD data.
 """
-import asyncio
 import html as html_lib
 import json
+import logging
 import re
 from urllib.parse import urljoin
 
-import requests
+import httpx
 
-from src.api.logging_ import logger
 from src.api.parsers.geocoder import resolve_ym_region
+from src.api.parsers.ozon.user_agent import pick_user_agent
 from src.config import api_settings
 
+logger = logging.getLogger(__name__)
+
+YANDEX_SEARCH_URL = "https://market.yandex.ru/search"
 YANDEX_PAGE_SIZE = 8
 MAX_YANDEX_PAGES = 20
 
 
-async def parse_yandex_market_products(query: str, limit: int = 5, skip: int = 0, location: str | None = None) -> list[dict]:
-    """Parse Yandex Market search results asynchronously.
-
-    Args:
-        query:    Search query.
-        limit:    Maximum number of results.
-        skip:     Number of results to skip.
-        location: City/region name for localised pricing (e.g. 'Санкт-Петербург').
-                  Defaults to Moscow when omitted.
-    """
-    lr = resolve_ym_region(location, api_settings.nominatim_url)
-    logger.info(f"Resolved Yandex Market region for location '{location}': lr={lr}")
-    return await asyncio.to_thread(_parse_yandex_market_products_sync, query, limit, skip, lr)
-
-
-def _parse_yandex_market_products_sync(query: str, limit: int = 5, skip: int = 0, lr: int = 213) -> list[dict]:
-    """Parse Yandex Market search results via HTML + embedded API state."""
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        ),
+def _build_headers() -> dict[str, str]:
+    return {
+        "User-Agent": pick_user_agent(),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
     }
 
+
+async def parse_yandex_market_products(
+    query: str,
+    limit: int = 5,
+    skip: int = 0,
+    location: str | None = None,
+) -> list[dict]:
+    """Parse Yandex Market search results asynchronously.
+
+    Args:
+        query: Search query.
+        limit: Maximum number of results.
+        skip: Number of results to skip.
+        location: City/region for regional pricing (e.g. 'Санкт-Петербург').
+                  Defaults to Moscow when omitted.
+    """
+    lr = resolve_ym_region(location, api_settings.nominatim_url)
     target_count = skip + limit
     max_pages = min(
         MAX_YANDEX_PAGES,
         max(1, (target_count + YANDEX_PAGE_SIZE - 1) // YANDEX_PAGE_SIZE + 2),
     )
-    results = []
-    seen_products = set()
+    results: list[dict] = []
+    seen_products: set[str] = set()
 
-    logger.info(f"Searching Yandex Market for: '{query}' (lr={lr}, limit={limit}, skip={skip})")
+    logger.info(
+        "Yandex Market parse start: query=%r limit=%d skip=%d lr=%d location=%r",
+        query,
+        limit,
+        skip,
+        lr,
+        location,
+    )
+
     try:
-        with requests.Session() as session:
+        async with httpx.AsyncClient(timeout=15, headers=_build_headers()) as client:
             for page in range(1, max_pages + 1):
                 params: dict[str, object] = {"text": query, "lr": lr}
                 if page > 1:
                     params["page"] = page
 
-                logger.info(f"Fetching Yandex Market search page {page}/{max_pages} for: '{query}' (lr={lr})")
-                response = session.get("https://market.yandex.ru/search", params=params, headers=headers, timeout=15)
+                response = await client.get(YANDEX_SEARCH_URL, params=params)
                 response.raise_for_status()
 
-                page_results = _parse_yandex_market_page(response.text, target_count)
-                logger.info(f"Parsed {len(page_results)} Yandex Market products from page {page}")
+                page_results = _parse_yandex_market_html(response.text, target_count, skip=0)
                 if not page_results:
-                    logger.info(f"Stopping Yandex Market search for '{query}': page {page} returned no products")
+                    logger.info(
+                        "Yandex Market: page %d returned no products, stopping",
+                        page,
+                    )
                     break
 
                 previous_count = len(results)
                 for product in page_results:
-                    product_key = product.get("url") or f"{product.get('name')}:{product.get('sale_price')}"
+                    product_key = (
+                        product.get("url")
+                        or f"{product.get('name')}:{product.get('sale_price')}"
+                    )
                     if product_key in seen_products:
                         continue
                     seen_products.add(product_key)
                     results.append(product)
                     if len(results) >= target_count:
-                        products = results[skip:target_count]
-                        logger.info(f"Collected {len(products)} Yandex Market products for: '{query}'")
-                        return products
+                        return results[skip:target_count]
 
                 if len(results) == previous_count:
-                    logger.info(f"Stopping Yandex Market search for '{query}': page {page} had no new unique products")
+                    logger.info(
+                        "Yandex Market: page %d had no new products, stopping",
+                        page,
+                    )
                     break
 
-        products = results[skip:target_count]
-        logger.info(f"Collected {len(products)} Yandex Market products for: '{query}'")
-        return products
-    except Exception as e:
-        logger.exception(f"Failed to scrape Yandex Market for: '{query}'")
-        raise RuntimeError(f"Failed to scrape Yandex Market: {e}") from e
+        return results[skip:target_count]
+    except Exception as exc:
+        logger.exception("Yandex Market parse failed for %r", query)
+        raise RuntimeError(f"Failed to scrape Yandex Market: {exc}") from exc
 
 
-def _parse_yandex_market_page(html: str, limit: int) -> list[dict]:
-    apiary_results = _parse_apiary_results(html, limit)
+def _parse_yandex_market_html(html: str, limit: int = 5, skip: int = 0) -> list[dict]:
+    """Parse Yandex Market search results from HTML."""
+    apiary_results = _parse_apiary_results(html, limit, skip)
     if apiary_results:
         return apiary_results
 
     results = []
     seen_urls = set()
-    
-    # Strategy 1: JSON-LD
     jsonld_matches = re.findall(
         r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL
     )
@@ -119,7 +130,7 @@ def _parse_yandex_market_page(html: str, limit: int) -> list[dict]:
                     items = [{"item": jsonld}]
             elif isinstance(jsonld, list):
                 items = [{"item": j} for j in jsonld if j.get("@type") == "Product"]
-            
+
             for item in items:
                 offer = item.get("item", item)
                 if _is_generic_yandex_page_result(offer):
@@ -146,10 +157,8 @@ def _parse_yandex_market_page(html: str, limit: int) -> list[dict]:
                     return results
         except (json.JSONDecodeError, ValueError):
             continue
-    
-    # Strategy 2: Regex fallback for price/title in page data
+
     if not results:
-        # YM sometimes embeds initial state in script tags
         state_match = re.search(
             r'<script[^>]*>\s*window\.__INIT_STATE__\s*=\s*(\{.+?\});\s*</script>',
             html, re.DOTALL
@@ -157,7 +166,6 @@ def _parse_yandex_market_page(html: str, limit: int) -> list[dict]:
         if state_match:
             try:
                 state = json.loads(state_match.group(1))
-                # Navigate the state tree to find search results
                 search_data = state.get("searchPage", state)
                 if isinstance(search_data, dict):
                     for key, val in search_data.items():
@@ -180,7 +188,7 @@ def _parse_yandex_market_page(html: str, limit: int) -> list[dict]:
                                     return results
             except (json.JSONDecodeError, ValueError):
                 pass
-    
+
     return results[:limit]
 
 

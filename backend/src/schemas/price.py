@@ -15,7 +15,7 @@ class PriceSearchRequest(BaseSchema):
 
 class ProductPrice(BaseSchema):
     source: str
-    price: float
+    price: float | None = None
     name: str | None = None
     brand: str | None = None
     original_price: float | None = None

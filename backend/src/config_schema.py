@@ -1,5 +1,6 @@
 import random
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -79,6 +80,21 @@ class OzonSettings(BaseModel):
         return None
 
 
+def _normalize_socks5_proxy_url(raw: str) -> str:
+    """Yandex Market httpx uses SOCKS5 only."""
+    value = raw.strip()
+    if "://" not in value:
+        return f"socks5://{value}"
+    parsed = urlparse(value)
+    if parsed.scheme in ("socks5", "socks5h"):
+        return value
+    if parsed.scheme in ("http", "https"):
+        return f"socks5://{parsed.netloc}"
+    raise ValueError(
+        f"yandex_market_settings: only socks5 proxy is supported, got {parsed.scheme!r}",
+    )
+
+
 class BrowserPoolSettings(BaseModel):
     wildberries_pool_size: int = Field(2, ge=1, le=5)
     "Number of parallel Chrome sessions for Wildberries"
@@ -88,11 +104,13 @@ class BrowserPoolSettings(BaseModel):
 
 class YandexMarketSettings(BaseModel):
     proxy: str | None = None
-    "Single proxy URL for httpx, e.g. http://user:pass@host:port"
+    "SOCKS5 proxy for httpx: user:pass@host:port or socks5://user:pass@host:port"
     proxies: list[str] = Field(default_factory=list)
-    "Proxy pool; a random entry is used when proxy is not set"
+    "SOCKS5 proxy pool; a random entry is used when proxy is not set"
     timeout: int = 30
     "httpx request timeout in seconds"
+    request_retries: int = Field(3, ge=1, le=6)
+    "Retries on proxy/connect errors (RemoteProtocolError, timeouts)"
     warmup: bool = True
     "Open market.yandex.ru once per client to obtain cookies before search"
 
@@ -102,7 +120,7 @@ class YandexMarketSettings(BaseModel):
             raw = random.choice(self.proxies)
         if not raw:
             return None
-        return raw if "://" in raw else f"http://{raw}"
+        return _normalize_socks5_proxy_url(raw)
 
 
 class WildberriesSettings(BaseModel):

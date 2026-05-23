@@ -2,11 +2,12 @@
 Yandex Market Price Search Script
 Uses httpx to fetch search page and parse embedded JSON-LD data.
 """
+import asyncio
 import html as html_lib
 import json
 import logging
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -24,6 +25,26 @@ MAX_YANDEX_PAGES = 20
 
 class YandexMarketAccessError(RuntimeError):
     """Captcha, redirect loop, or anti-bot page from Yandex Market."""
+
+
+_RETRYABLE_HTTPX_ERRORS = (
+    httpx.RemoteProtocolError,
+    httpx.ConnectError,
+    httpx.ProxyError,
+    httpx.NetworkError,
+    httpx.ReadTimeout,
+    httpx.ConnectTimeout,
+    httpx.WriteTimeout,
+    httpx.PoolTimeout,
+)
+
+
+def _proxy_log_label(proxy_url: str) -> str:
+    parsed = urlparse(proxy_url)
+    host = parsed.hostname or "?"
+    port = parsed.port or ""
+    suffix = f":{port}" if port else ""
+    return f"{parsed.scheme}://***@{host}{suffix}"
 
 
 def _build_headers(*, referer: str | None = None) -> dict[str, str]:
@@ -84,16 +105,20 @@ def _ensure_ok_response(response: httpx.Response, *, context: str) -> None:
 
 def _build_client() -> httpx.AsyncClient:
     proxy = yandex_market_settings.resolve_proxy()
-    timeout = float(yandex_market_settings.timeout)
+    timeout = httpx.Timeout(
+        float(yandex_market_settings.timeout),
+        connect=min(20.0, float(yandex_market_settings.timeout)),
+    )
     headers = _build_headers()
     kwargs: dict[str, object] = {
         "timeout": timeout,
         "headers": headers,
         "follow_redirects": True,
+        "http2": False,
     }
     if proxy:
         kwargs["proxy"] = proxy
-        logger.info("Yandex Market httpx client uses proxy")
+        logger.info("Yandex Market httpx proxy: %s", _proxy_log_label(proxy))
     else:
         logger.warning(
             "Yandex Market httpx client without proxy — captcha likely on datacenter IPs",
@@ -101,13 +126,48 @@ def _build_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(**kwargs)  # type: ignore[arg-type]
 
 
+async def _get_with_retries(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    context: str,
+    **kwargs: object,
+) -> httpx.Response:
+    retries = yandex_market_settings.request_retries
+    last_exc: BaseException | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return await client.get(url, **kwargs)  # type: ignore[arg-type]
+        except _RETRYABLE_HTTPX_ERRORS as exc:
+            last_exc = exc
+            logger.warning(
+                "Yandex Market %s failed (attempt %d/%d): %s",
+                context,
+                attempt,
+                retries,
+                exc,
+            )
+            if attempt < retries:
+                await asyncio.sleep(0.6 * attempt)
+    assert last_exc is not None
+    raise RuntimeError(
+        f"Yandex Market {context}: SOCKS5 proxy/network error after {retries} attempts: "
+        f"{last_exc}",
+    ) from last_exc
+
+
 async def _warmup_client(client: httpx.AsyncClient) -> None:
-    response = await client.get(
-        YANDEX_HOME_URL,
-        headers=_build_headers(),
-        follow_redirects=True,
-    )
-    _ensure_ok_response(response, context="warmup")
+    try:
+        response = await _get_with_retries(
+            client,
+            YANDEX_HOME_URL,
+            context="warmup",
+            headers=_build_headers(),
+            follow_redirects=True,
+        )
+        _ensure_ok_response(response, context="warmup")
+    except (YandexMarketAccessError, RuntimeError) as exc:
+        logger.warning("Yandex Market warmup skipped: %s", exc)
 
 
 async def parse_yandex_market_products(
@@ -153,8 +213,10 @@ async def parse_yandex_market_products(
                 if page > 1:
                     params["page"] = page
 
-                response = await client.get(
+                response = await _get_with_retries(
+                    client,
                     YANDEX_SEARCH_URL,
+                    context=f"search page {page}",
                     params=params,
                     headers=_build_headers(referer=YANDEX_HOME_URL),
                     follow_redirects=True,

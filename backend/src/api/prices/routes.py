@@ -1,49 +1,35 @@
 import asyncio
-import logging
 
 from fastapi import APIRouter
 from fastapi_derive_responses import AutoDeriveResponsesAPIRoute
 
 from src.api.parsers import parse_ozon_products, parse_wildberries_products, parse_yandex_market_products
-from src.api.parsers.spellcheck import spellcheck
 from src.schemas import MarketplacePriceResult, PriceSearchRequest, PriceSearchResponse, ProductPrice
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/prices", tags=["Prices"], route_class=AutoDeriveResponsesAPIRoute)
 
 
 @router.post("/search")
 async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
-    query = payload.query
-    fixed_query: str | None = None
-    if not payload.bypass_spellchecker:
-        checked_query = await asyncio.to_thread(spellcheck, payload.query)
-        if checked_query != payload.query:
-            fixed_query = checked_query
-            query = checked_query
-            logger.info("Spellcheck corrected search query: %r -> %r", payload.query, checked_query)
-
     yandex_result, wildberries_result, ozon_result = await asyncio.gather(
         parse_yandex_market_products(
-            query,
+            payload.query,
             payload.limit,
             payload.skip,
-            payload.location,
+            location=payload.location,
         ),
         parse_wildberries_products(
-            query,
+            payload.query,
             payload.limit,
             payload.skip,
-            payload.location,
+            location=payload.location,
         ),
-        parse_ozon_products(query, payload.limit),
+        parse_ozon_products(payload.query, payload.limit, payload.skip, location=payload.location),
         return_exceptions=True,
     )
 
     return PriceSearchResponse(
         query=payload.query,
-        fixed_query=fixed_query,
         results=[
             _build_yandex_market_result(yandex_result),
             _build_wildberries_result(wildberries_result),

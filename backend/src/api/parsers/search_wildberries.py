@@ -16,12 +16,8 @@ async def parse_wildberries_products(
     *,
     dest: int = WB_MOSCOW_DEST,
 ) -> list[dict]:
-<<<<<<< HEAD
-    """Parse Wildberries via pooled Chrome sessions (warm browser)."""
-=======
     """Parse Wildberries via pooled Chrome sessions (warm browser, regional pricing)."""
     dest = resolve_wb_dest(location)
->>>>>>> 5be78a8 (feat: remove nominatim as it turned way too much time to load. Translate all logs to English)
     logger.info(
         "Wildberries parse start: keyword=%r limit=%d skip=%d dest=%d (pooled)",
         keyword,

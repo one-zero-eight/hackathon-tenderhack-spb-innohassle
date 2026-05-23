@@ -57,9 +57,6 @@ async def parse_yandex_market_products(
     *,
     lr: int = YM_MOSCOW_LR,
 ) -> list[dict]:
-<<<<<<< HEAD
-    """Parse Yandex Market search results asynchronously."""
-=======
     """Parse Yandex Market search results asynchronously.
 
     Args:
@@ -70,7 +67,6 @@ async def parse_yandex_market_products(
                   Defaults to Moscow when omitted.
     """
     lr = resolve_ym_region(location)
->>>>>>> 5be78a8 (feat: remove nominatim as it turned way too much time to load. Translate all logs to English)
     target_count = skip + limit
     max_pages = min(
         MAX_YANDEX_PAGES,

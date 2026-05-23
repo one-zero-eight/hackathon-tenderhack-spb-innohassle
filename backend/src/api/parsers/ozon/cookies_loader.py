@@ -49,7 +49,8 @@ async def apply_cookies(
     base_url: str = "https://www.ozon.ru",
     via_proxy: bool = False,
     page_load_timeout: int | None = None,
-    page_load_retries: int = 4,
+    page_load_retries: int = 2,
+    reload: bool = True,
 ) -> int:
     """Загружает cookies в браузер (сначала открывает домен)."""
     cookies = load_cookies_file(cookies_path)
@@ -59,6 +60,7 @@ async def apply_cookies(
         via_proxy=via_proxy,
         page_load_timeout=page_load_timeout,
         retries=page_load_retries,
+        fast=True,
     )
     added = 0
     for cookie in cookies:
@@ -67,7 +69,8 @@ async def apply_cookies(
             added += 1
         except Exception:
             continue
-    await driver.refresh()
+    if reload:
+        await driver.refresh()
     return added
 
 

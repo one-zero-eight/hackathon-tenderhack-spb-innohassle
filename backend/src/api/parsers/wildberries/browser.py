@@ -7,6 +7,7 @@ from pathlib import Path
 from selenium_driverless import webdriver
 from selenium_driverless.webdriver import Chrome
 
+from src.api.parsers.chrome_fast import apply_fast_chrome_args
 from src.api.parsers.ozon.user_agent import pick_user_agent
 from src.config import wildberries_settings
 
@@ -41,11 +42,11 @@ def _resolve_chrome_executable_path() -> str | None:
 
 def _build_chrome_options(*, headless: bool) -> tuple[webdriver.ChromeOptions, str]:
     options = webdriver.ChromeOptions()
+    apply_fast_chrome_args(options)
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--lang=ru-RU")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-popup-blocking")
 
     user_agent = pick_user_agent()
     options.add_argument(f"--user-agent={user_agent}")

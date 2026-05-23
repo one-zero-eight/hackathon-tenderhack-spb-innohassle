@@ -11,7 +11,8 @@ from selenium_driverless.webdriver import Chrome
 
 from src.api.parsers.ozon.cookies_loader import apply_cookies, resolve_cookies_path
 from src.api.parsers.ozon.exceptions import OzonAccessError
-from src.api.parsers.ozon.navigation import DEFAULT_ELEMENT_WAIT, DEFAULT_RETRIES, safe_get
+from src.api.parsers.ozon.navigation import DEFAULT_ELEMENT_WAIT, safe_get
+from src.api.parsers.wait import wait_for_css
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +56,10 @@ async def _dismiss_overlays(driver: Chrome) -> None:
         "//button[contains(.,'Принять')]",
     ):
         try:
-            btn = await driver.find_element(By.XPATH, xpath, timeout=2)
+            btn = await driver.find_element(By.XPATH, xpath, timeout=1)
             if await btn.is_visible():
                 await btn.click()
-                await _sleep(0.3, 0.6)
+                await _sleep(0.2, 0.4)
         except Exception:
             continue
 
@@ -76,10 +77,11 @@ async def warmup_ozon_session(
     via_proxy: bool = False,
     page_load_timeout: int | None = None,
     element_wait_timeout: int = DEFAULT_ELEMENT_WAIT,
-    page_load_retries: int = DEFAULT_RETRIES,
+    page_load_retries: int = 2,
 ) -> int:
-    wait = (8.0, 12.0) if slow or via_proxy else (2.5, 4.0)
+    wait = (4.0, 6.0) if slow else (1.0, 2.0)
     manual_wait = 90 if via_proxy and not headless else (60 if not headless else 45)
+    nav_retries = page_load_retries if slow else min(page_load_retries, 2)
 
     logger.info("Прогрев: открываю %s", OZON_HOME)
     await safe_get(
@@ -87,7 +89,8 @@ async def warmup_ozon_session(
         OZON_HOME,
         via_proxy=via_proxy,
         page_load_timeout=page_load_timeout,
-        retries=page_load_retries,
+        retries=nav_retries,
+        fast=not slow,
     )
     await _sleep(*wait)
     await _dismiss_overlays(driver)
@@ -115,7 +118,7 @@ async def warmup_ozon_session(
             )
 
     try:
-        await driver.find_element(By.CSS_SELECTOR, SEARCH_INPUT_CSS, timeout=element_wait_timeout)
+        await wait_for_css(driver, SEARCH_INPUT_CSS, timeout=min(float(element_wait_timeout), 8.0))
     except (TimeoutError, NoSuchElementException):
         logger.debug("Поле поиска не дождались — продолжаем")
 
@@ -126,24 +129,55 @@ async def warmup_ozon_session(
     return count
 
 
+async def prime_session_with_cookies(
+    driver: Chrome,
+    cookies_path: Path,
+    *,
+    via_proxy: bool = False,
+    page_load_timeout: int | None = None,
+    slow: bool = False,
+) -> int:
+    """
+    Быстрый старт: одна загрузка ozon.ru, cookies без refresh, без отдельного прогрева главной.
+    """
+    path = resolve_cookies_path(cookies_path)
+    if not path or not path.exists():
+        logger.warning("Файл cookies не найден: %s", cookies_path)
+        return 0
+
+    logger.info("Быстрый старт с cookies: %s", path.name)
+    added = await apply_cookies(
+        driver,
+        path,
+        via_proxy=via_proxy,
+        page_load_timeout=page_load_timeout,
+        page_load_retries=1 if not slow else 2,
+        reload=False,
+    )
+    await _sleep(0.2, 0.4 if slow else 0.3)
+    await _dismiss_overlays(driver)
+
+    if await _is_blocked(driver):
+        raise OzonAccessError(
+            "Ozon заблокировал доступ после загрузки cookies.",
+            url=await driver.current_url,
+        )
+
+    logger.info("Cookies из файла %s: %d", path.name, added)
+    return added
+
+
 async def merge_cookies_from_file(
     driver: Chrome,
     cookies_path: Path,
     *,
     via_proxy: bool = False,
     page_load_timeout: int | None = None,
-    page_load_retries: int = DEFAULT_RETRIES,
+    page_load_retries: int = 2,
 ) -> int:
-    path = resolve_cookies_path(cookies_path)
-    if not path or not path.exists():
-        logger.warning("Файл cookies не найден: %s", cookies_path)
-        return 0
-    added = await apply_cookies(
+    return await prime_session_with_cookies(
         driver,
-        path,
+        cookies_path,
         via_proxy=via_proxy,
         page_load_timeout=page_load_timeout,
-        page_load_retries=page_load_retries,
     )
-    logger.info("Дополнительно из файла %s: %d cookies", path.name, added)
-    return added

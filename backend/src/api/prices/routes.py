@@ -12,7 +12,6 @@ router = APIRouter(prefix="/prices", tags=["Prices"], route_class=AutoDeriveResp
 @router.post("/search")
 async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
     yandex_result, wildberries_result, ozon_result = await asyncio.gather(
-<<<<<<< HEAD
         parse_yandex_market_products(
             payload.query,
             payload.limit,
@@ -25,10 +24,6 @@ async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
             payload.skip,
             payload.location,
         ),
-=======
-        parse_yandex_market_products(payload.query, payload.limit),
-        parse_wildberries_products(payload.query, payload.limit),
->>>>>>> 05f8198 (fix)
         parse_ozon_products(payload.query, payload.limit),
         return_exceptions=True,
     )

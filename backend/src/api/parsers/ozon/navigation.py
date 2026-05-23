@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 90
 PROXY_TIMEOUT = 180
+FAST_NAVIGATION_CAP = 12
 DEFAULT_ELEMENT_WAIT = 45
 DEFAULT_RETRIES = 4
 
@@ -20,6 +21,19 @@ def _load_timeout(*, via_proxy: bool, page_load_timeout: int | None) -> float:
     return float(PROXY_TIMEOUT if via_proxy else DEFAULT_TIMEOUT)
 
 
+def effective_navigation_timeout(
+    *,
+    via_proxy: bool,
+    page_load_timeout: int | None,
+    fast: bool = False,
+) -> float:
+    """Ограничивает таймаут навигации, чтобы не ждать 180 с из settings при обычном поиске."""
+    timeout = _load_timeout(via_proxy=via_proxy, page_load_timeout=page_load_timeout)
+    if fast:
+        return min(timeout, float(FAST_NAVIGATION_CAP))
+    return timeout
+
+
 async def safe_get(
     driver: Chrome,
     url: str,
@@ -27,13 +41,19 @@ async def safe_get(
     via_proxy: bool = False,
     page_load_timeout: int | None = None,
     retries: int = DEFAULT_RETRIES,
+    fast: bool = False,
+    wait_load: bool = True,
 ) -> None:
-    timeout = _load_timeout(via_proxy=via_proxy, page_load_timeout=page_load_timeout)
+    timeout = effective_navigation_timeout(
+        via_proxy=via_proxy,
+        page_load_timeout=page_load_timeout,
+        fast=fast,
+    )
     last_exc: Exception | None = None
 
     for attempt in range(1, retries + 1):
         try:
-            await driver.get(url, wait_load=True, timeout=timeout)
+            await driver.get(url, wait_load=wait_load, timeout=timeout)
             return
         except TimeoutError as exc:
             last_exc = exc

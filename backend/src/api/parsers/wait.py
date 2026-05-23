@@ -37,5 +37,17 @@ async def wait_for_element(
     raise NoSuchElementException(f"Element not found: {by}={value!r}")
 
 
-async def wait_for_css(driver: Chrome, selector: str, *, timeout: float = 15) -> WebElement:
-    return await wait_for_element(driver, By.CSS_SELECTOR, selector, timeout=timeout)
+async def wait_for_css(
+    driver: Chrome,
+    selector: str,
+    *,
+    timeout: float = 15,
+    poll_interval: float = 0.3,
+) -> WebElement:
+    return await wait_for_element(
+        driver,
+        By.CSS_SELECTOR,
+        selector,
+        timeout=timeout,
+        poll_interval=poll_interval,
+    )

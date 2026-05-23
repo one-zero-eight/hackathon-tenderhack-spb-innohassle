@@ -44,22 +44,27 @@ class OzonSeleniumParser:
         user_data_dir: str | None = None,
         cookies_file: str | Path | None = None,
         proxy: str | None = None,
-        scroll_pause: tuple[float, float] = (2.0, 3.5),
+        scroll_pause: tuple[float, float] = (0.8, 1.2),
         slow_mode: bool = False,
         page_load_timeout: int | None = None,
         element_wait_timeout: int = 45,
         page_load_retries: int = 4,
+        keep_alive: bool = False,
+        session_ready: bool = False,
     ) -> None:
         self.headless = headless
         self.user_data_dir = user_data_dir
         self.cookies_file = cookies_file
         self.proxy = proxy
         self.slow_mode = slow_mode
+        self.keep_alive = keep_alive
+        self._session_ready = session_ready
         self.page_load_timeout = page_load_timeout
         self.element_wait_timeout = element_wait_timeout
         self.page_load_retries = page_load_retries
-        self.scroll_pause = (
-            (4.0, 6.0) if slow_mode else scroll_pause
+        self.scroll_pause = (2.0, 3.0) if slow_mode else scroll_pause
+        self._nav_retries = 1 if (keep_alive and not slow_mode) else (
+            page_load_retries if slow_mode else min(page_load_retries, 2)
         )
         self.driver: Chrome | None = None
         self.user_agent: str | None = None
@@ -85,6 +90,8 @@ class OzonSeleniumParser:
         )
 
     async def close(self) -> None:
+        if self.keep_alive:
+            return
         if self.driver:
             await self.driver.quit()
             self.driver = None
@@ -112,12 +119,13 @@ class OzonSeleniumParser:
             url,
             via_proxy=self.via_proxy,
             page_load_timeout=self.page_load_timeout,
-            retries=self.page_load_retries,
+            retries=self._nav_retries,
+            fast=not self.slow_mode,
         )
-        if self.slow_mode or self.via_proxy:
-            await self._sleep(4.0, 6.0)
-        else:
-            await self._sleep(1.0, 2.0)
+        if self.slow_mode:
+            await self._sleep(2.0, 3.0)
+        elif not self.keep_alive:
+            await self._sleep(0.3, 0.5)
         if await self._is_blocked():
             raise OzonAccessError(
                 f"Ozon ограничил доступ: {url}. Попробуйте без --headless, --slow, меньший -n.",
@@ -141,12 +149,14 @@ class OzonSeleniumParser:
     async def search(self, query: str) -> None:
         logger.info("Поиск: %s", query)
         await self._goto(f"{OZON_HOME}search/?text={quote(query)}&from_global=true")
-        await self._dismiss_overlays()
+        if not self.keep_alive:
+            await self._dismiss_overlays()
         try:
             await wait_for_css(
                 self._d,
                 "a[href*='/product/']",
-                timeout=min(float(self.element_wait_timeout), 15.0),
+                timeout=min(float(self.element_wait_timeout), 8.0),
+                poll_interval=0.15,
             )
         except (TimeoutError, NoSuchElementException):
             await self._search_via_input(query)
@@ -166,11 +176,11 @@ class OzonSeleniumParser:
         await field.send_keys(query, click_on=False)
         await self._sleep(0.3, 0.7)
         await self._d.send_keys("\n")
-        await self._sleep(2, 3)
+        await self._sleep(0.8, 1.2)
         await wait_for_css(
             self._d,
             "a[href*='/product/']",
-            timeout=min(float(self.element_wait_timeout), 15.0),
+            timeout=min(float(self.element_wait_timeout), 10.0),
         )
 
     async def _scroll_step(self) -> None:
@@ -245,12 +255,12 @@ class OzonSeleniumParser:
         seen: set[str] = set()
         stale = 0
         prev_total = 0
-        max_rounds = max(30, limit * 2)
+        max_rounds = 2 if self.keep_alive else limit + 2
 
         logger.info("Прокрутка выдачи для %d товаров...", limit)
 
         for _rnd in range(max_rounds):
-            if await self._is_blocked():
+            if _rnd > 0 and await self._is_blocked():
                 if ordered:
                     logger.warning("Блокировка после %d товаров", len(ordered))
                     break
@@ -271,13 +281,14 @@ class OzonSeleniumParser:
                 stale = 0
             prev_total = len(ordered)
 
-            if stale >= 4:
+            if stale >= 1:
                 await self._d.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                await self._sleep(2, 3)
+                await self._sleep(0.4, 0.6)
                 stale = 0
                 continue
 
-            await self._scroll_step()
+            if _rnd + 1 < max_rounds:
+                await self._scroll_step()
 
         return ordered[:limit]
 
@@ -353,7 +364,7 @@ class OzonSeleniumParser:
         fetch_details: bool = False,
         batch_size: int = 4,
     ) -> list[ProductResult]:
-        if limit <= batch_size * 2:
+        if fetch_details and limit <= batch_size * 2:
             raise ValueError(f"Требуется n > 2*m: n={limit}, m={batch_size}")
 
         await self.search(query)

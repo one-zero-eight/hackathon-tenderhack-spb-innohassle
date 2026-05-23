@@ -9,6 +9,7 @@ from src.api.parsers.wildberries.exceptions import WildberriesAccessError
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 25
+FAST_TIMEOUT = 12
 DEFAULT_RETRIES = 2
 
 
@@ -18,13 +19,16 @@ async def safe_get(
     *,
     page_load_timeout: int | None = None,
     retries: int = DEFAULT_RETRIES,
+    fast: bool = False,
+    wait_load: bool = True,
 ) -> None:
-    timeout = float(page_load_timeout if page_load_timeout is not None else DEFAULT_TIMEOUT)
+    configured = float(page_load_timeout if page_load_timeout is not None else DEFAULT_TIMEOUT)
+    timeout = min(configured, float(FAST_TIMEOUT)) if fast else configured
     last_exc: Exception | None = None
 
     for attempt in range(1, retries + 1):
         try:
-            await driver.get(url, wait_load=True, timeout=timeout)
+            await driver.get(url, wait_load=wait_load, timeout=timeout)
             return
         except TimeoutError as exc:
             last_exc = exc

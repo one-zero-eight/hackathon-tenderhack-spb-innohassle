@@ -1,6 +1,7 @@
 import logging
 import re
 
+from src.api.parsers.browser_session_pool import get_browser_session_pool
 from src.api.parsers.ozon.exceptions import OzonAccessError
 from src.api.parsers.ozon.parser import OzonSeleniumParser
 from src.config import ozon_settings, settings_dir
@@ -9,52 +10,32 @@ logger = logging.getLogger(__name__)
 
 
 async def parse_ozon_products(query: str, limit: int = 5) -> list[dict]:
-    """Parse Ozon search results asynchronously via selenium-driverless."""
-    headless = ozon_settings.headless
-    slow_mode = ozon_settings.slow
-    proxy = ozon_settings.resolve_proxy()
-    fetch_details = ozon_settings.fetch_details
-
-    cookies_path = ozon_settings.resolve_cookies_path(settings_dir=settings_dir)
-
-    parser_limit = max(limit, 3)
-    batch_size = max(1, (parser_limit - 1) // 2)
-
-    logger.info(
-        "Ozon parse start: query=%r limit=%d parser_limit=%d headless=%s slow=%s proxy=%s fetch_details=%s",
-        query,
-        limit,
-        parser_limit,
-        headless,
-        slow_mode,
-        bool(proxy),
-        fetch_details,
-    )
-
+    """Parse Ozon via pooled Chrome session (warm browser, ~5s per request)."""
     try:
-        async with OzonSeleniumParser(
-            headless=headless,
-            slow_mode=slow_mode,
-            cookies_file=cookies_path,
-            proxy=proxy,
-            page_load_timeout=ozon_settings.page_load_timeout,
-            element_wait_timeout=ozon_settings.element_wait_timeout,
-            page_load_retries=ozon_settings.page_load_retries,
-        ) as parser:
-            raw_results = await parser.run(
-                query,
-                parser_limit,
-                fetch_details=fetch_details,
-                batch_size=batch_size,
-            )
-    except (OzonAccessError, ValueError) as exc:
+        return await get_browser_session_pool().parse_ozon(query, limit)
+    except (OzonAccessError, ValueError, RuntimeError) as exc:
         logger.error("Ozon parse failed for %r: %s", query, exc)
         raise
 
+
+async def parse_ozon_with_parser(parser: OzonSeleniumParser, query: str, limit: int) -> list[dict]:
+    fetch_details = ozon_settings.fetch_details
+    parser_limit = limit
+    batch_size = max(1, (parser_limit - 1) // 2) if parser_limit > 1 else 1
+
     logger.info(
-        "Ozon raw products: %d, with price string: %d",
-        len(raw_results),
-        sum(1 for p in raw_results if p.price),
+        "Ozon parse start: query=%r limit=%d parser_limit=%d fetch_details=%s (pooled)",
+        query,
+        limit,
+        parser_limit,
+        fetch_details,
+    )
+
+    raw_results = await parser.run(
+        query,
+        parser_limit,
+        fetch_details=fetch_details,
+        batch_size=batch_size,
     )
 
     results = []
@@ -78,6 +59,21 @@ async def parse_ozon_products(query: str, limit: int = 5) -> list[dict]:
         sum(1 for item in results if item.get("sale_price") is not None),
     )
     return results
+
+
+async def parse_ozon_products_cold(query: str, limit: int = 5) -> list[dict]:
+    """Разовый парсинг с закрытием Chrome (fallback без пула)."""
+    cookies_path = ozon_settings.resolve_cookies_path(settings_dir=settings_dir)
+    async with OzonSeleniumParser(
+        headless=ozon_settings.headless,
+        slow_mode=ozon_settings.slow,
+        cookies_file=cookies_path,
+        proxy=ozon_settings.resolve_proxy(),
+        page_load_timeout=ozon_settings.page_load_timeout,
+        element_wait_timeout=ozon_settings.element_wait_timeout,
+        page_load_retries=ozon_settings.page_load_retries,
+    ) as parser:
+        return await parse_ozon_with_parser(parser, query, limit)
 
 
 def _parse_price(price: str | None) -> float | None:

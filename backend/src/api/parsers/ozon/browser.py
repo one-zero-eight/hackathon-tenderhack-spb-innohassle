@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 
 from selenium_driverless import webdriver
 from selenium_driverless.webdriver import Chrome
 
+from src.api.parsers.chrome_fast import apply_fast_chrome_args
 from src.api.parsers.ozon.proxy import apply_proxy
-from src.api.parsers.ozon.session import merge_cookies_from_file, warmup_ozon_session
+from src.api.parsers.ozon.session import prime_session_with_cookies, warmup_ozon_session
 from src.api.parsers.ozon.user_agent import pick_user_agent
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ def _build_chrome_options(
     proxy: str | None,
 ) -> tuple[webdriver.ChromeOptions, str]:
     options = webdriver.ChromeOptions()
+    apply_fast_chrome_args(options)
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--lang=ru-RU")
     options.add_argument("--no-sandbox")
@@ -63,36 +64,36 @@ async def create_driverless_driver(
         proxy=proxy,
     )
     via_proxy = proxy is not None
+    cookies_path = Path(cookies_file) if cookies_file else None
+    nav_retries = page_load_retries if slow_mode else min(page_load_retries, 2)
 
     driver = webdriver.Chrome(options=options)
     await driver.start_session()
 
     logger.info(
-        "Chrome + selenium-driverless (headless=%s, proxy=%s)",
+        "Chrome + selenium-driverless (headless=%s, proxy=%s, cookies=%s)",
         headless,
         via_proxy,
+        bool(cookies_path),
     )
 
-    if via_proxy:
-        await asyncio.sleep(1)
-
-    await warmup_ozon_session(
-        driver,
-        slow=slow_mode,
-        headless=headless,
-        via_proxy=via_proxy,
-        page_load_timeout=page_load_timeout,
-        element_wait_timeout=element_wait_timeout,
-        page_load_retries=page_load_retries,
-    )
-
-    if cookies_file:
-        await merge_cookies_from_file(
+    if cookies_path and cookies_path.exists():
+        await prime_session_with_cookies(
             driver,
-            Path(cookies_file),
+            cookies_path,
             via_proxy=via_proxy,
             page_load_timeout=page_load_timeout,
-            page_load_retries=page_load_retries,
+            slow=slow_mode,
+        )
+    else:
+        await warmup_ozon_session(
+            driver,
+            slow=slow_mode,
+            headless=headless,
+            via_proxy=via_proxy,
+            page_load_timeout=page_load_timeout,
+            element_wait_timeout=element_wait_timeout,
+            page_load_retries=nav_retries,
         )
 
     return driver, user_agent, via_proxy

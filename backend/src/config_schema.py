@@ -46,11 +46,11 @@ class OzonSettings(BaseModel):
     "Single proxy URL, e.g. socks5://user:pass@host:port"
     proxies: list[str] = Field(default_factory=list)
     "Proxy pool; a random entry is used when proxy is not set"
-    page_load_timeout: int = 180
+    page_load_timeout: int = 60
     "Max seconds to wait for Ozon page load"
-    element_wait_timeout: int = 45
+    element_wait_timeout: int = 15
     "Max seconds to wait for search results and other DOM elements"
-    page_load_retries: int = 4
+    page_load_retries: int = 2
     "How many times to retry opening a page after timeout"
     fetch_details: bool = False
     "Open each product page to read price (slower, like CLI --details)"

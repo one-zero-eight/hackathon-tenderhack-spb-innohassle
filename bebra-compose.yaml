@@ -1,0 +1,91 @@
+services:
+    frontend:
+        restart: always
+        build:
+            context: frontend
+            dockerfile: Dockerfile
+        ports:
+            - "127.0.0.1:9010:8080"
+
+    caddy:
+      image: caddy:latest
+      container_name: caddy-server
+      restart: unless-stopped
+      ports:
+          - "127.0.0.1:8080:8080"
+      volumes:
+          - ./bebra.Caddyfile:/etc/caddy/Caddyfile
+          - caddy_data:/data
+      networks:
+          - app_network
+      depends_on:
+          - frontend
+          - api
+
+    api:
+        build:
+            context: ./backend
+            dockerfile: Dockerfile
+        depends_on:
+            postgres:
+                condition: service_healthy
+        restart: always
+        ports:
+            - "127.0.0.1:9011:8000"
+        configs:
+            - source: backend_settings
+              target: /app/settings.yaml
+
+    postgres:
+        image: "postgres:17.1"
+        restart: always
+        volumes:
+            - "postgres:/var/lib/postgresql/data"
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U postgres"]
+            interval: 5s
+            timeout: 5s
+            retries: 5
+        environment:
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+
+volumes:
+    caddy_data:
+    postgres:
+
+
+configs:
+    backend_settings:
+        content: |
+            $$schema: "./settings.schema.yaml"
+            api_settings:
+                db_url: "postgresql+asyncpg://postgres:postgres@postgres:5432/postgres"
+                secret_key: ${SECRET_KEY:-meow}
+                token_expiration_in_minutes: 60
+
+            auth_settings:
+                access_token_ttl_minutes: 60
+                refresh_token_ttl_days: 7
+    
+            ozon_settings:
+                headless: 1
+                slow: 0
+                page_load_timeout: 20
+                element_wait_timeout: 8
+                page_load_retries: 1
+                fetch_details: false
+                cookies_file: cookies.json
+                proxy: "NaTLKpP86D:b35iXcQ25L@103.82.103.253:50705"
+                proxies:
+                    - "NaTLKpP86D:b35iXcQ25L@103.82.103.253:50705"
+
+            wildberries_settings:
+                headless: true
+                chrome_executable_path: null
+                page_load_timeout: 25
+                element_wait_timeout: 12
+                page_load_retries: 2
+
+            browser_pool_settings:
+                wildberries_pool_size: 2
+                ozon_pool_size: 2

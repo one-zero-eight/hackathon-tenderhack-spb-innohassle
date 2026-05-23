@@ -1,0 +1,11 @@
+localhost:8080 {
+    handle_path /api/* {
+        reverse_proxy localhost:9011
+    }
+    handle_path /search-api/* {
+        reverse_proxy 100.64.0.3:9005
+    }
+    handle {
+        reverse_proxy localhost:9010
+    }
+}

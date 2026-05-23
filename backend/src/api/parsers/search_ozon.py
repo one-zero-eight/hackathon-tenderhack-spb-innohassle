@@ -5,6 +5,7 @@ from src.api.parsers.browser_session_pool import get_browser_session_pool
 from src.api.parsers.ozon.exceptions import OzonAccessError
 from src.api.parsers.ozon.parser import OzonParser
 from src.api.parsers.ozon.run import run_ozon_search
+from src.api.parsers.ozon.stream import iter_ozon_composer_raw
 from src.config import ozon_settings, settings_dir
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,27 @@ async def parse_ozon_products(
         )
     except (OzonAccessError, ValueError, RuntimeError) as exc:
         logger.error("Ozon parse failed for %r: %s", query, exc)
+        raise
+
+
+async def iter_ozon_composer_pages(
+    query: str,
+    limit: int = 5,
+    *,
+    skip: int = 0,
+    location: str | None = None,
+) -> AsyncIterator[dict]:
+    """Stream Ozon composer-api pages until skip+limit priced products are available."""
+    try:
+        async for page in get_browser_session_pool().iter_ozon_composer_pages(
+            query,
+            limit,
+            skip=skip,
+            location=location,
+        ):
+            yield page
+    except (OzonAccessError, ValueError, RuntimeError) as exc:
+        logger.error("Ozon composer raw stream failed for %r: %s", query, exc)
         raise
 
 
@@ -69,5 +91,6 @@ async def parse_ozon_products_cold(
         page_load_timeout=ozon_settings.page_load_timeout,
         element_wait_timeout=ozon_settings.element_wait_timeout,
         page_load_retries=ozon_settings.page_load_retries,
+        composer_search=ozon_settings.composer_search,
     ) as parser:
         return await run_ozon_search(parser, query, limit, skip=skip, location=location)

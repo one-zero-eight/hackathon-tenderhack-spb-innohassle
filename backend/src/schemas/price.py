@@ -13,6 +13,17 @@ class PriceSearchRequest(BaseSchema):
         default=None,
         description="City or region for regional pricing on WB, Yandex Market, and Ozon. Defaults to Moscow.",
     )
+    ozon_composer_raw: bool | None = Field(
+        default=None,
+        description=(
+            "If true, Ozon is loaded via composer-api HTTP (browser session) and parsed on this backend. "
+            "If null, uses ozon_settings.composer_raw."
+        ),
+    )
+    include_ozon_composer_data: bool = Field(
+        default=False,
+        description="Also stream raw composer JSON as type=ozon_composer (debug; large payloads).",
+    )
 
 
 class ProductPrice(BaseSchema):

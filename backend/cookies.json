@@ -1,7 +1,7 @@
 [
     {
         "domain": ".ozon.ru",
-        "expirationDate": 1811091502.544124,
+        "expirationDate": 1811100501.008713,
         "hostOnly": false,
         "httpOnly": true,
         "name": "__Secure-user-id",
@@ -14,7 +14,7 @@
     },
     {
         "domain": ".ozon.ru",
-        "expirationDate": 1811091502.543715,
+        "expirationDate": 1811100501.008685,
         "hostOnly": false,
         "httpOnly": false,
         "name": "__Secure-ab-group",
@@ -27,7 +27,7 @@
     },
     {
         "domain": ".ozon.ru",
-        "expirationDate": 1811091502.543094,
+        "expirationDate": 1811100501.008587,
         "hostOnly": false,
         "httpOnly": true,
         "name": "__Secure-access-token",
@@ -36,11 +36,11 @@
         "secure": true,
         "session": false,
         "storeId": null,
-        "value": "12.228200529.5dLQoDE9RYyYoOFwWxRrCA.26.AVAb_CIIYeeIv8UB1DLmnBQXb9BTBMmKklSVKtVOvRkLQJh0eWPyu9D7m4Ip2suk6QMiSgLTX2Vojuh4hSYNXWYMLlqkwDA4wCcoqN8jE8Rmk_TU8zIi-N-KlveIq84j-CO1nxvwIRdh88qbOPeZ1mI.20251118205206.20260523185822.1.dV2NqaqAyejugh_i3xpkKPb1fuYSpENQ-QbfWS9PLug.16c284e2f834be48c"
+        "value": "12.228200529.5dLQoDE9RYyYoOFwWxRrCA.26.AY800TdWzCDvfZU2NVxjQAGdXecS2c4HfysqZoW-boc6awyULdk-Zk6aU8R_vkryLCsorWzId-TWGSSeAxsO43ZV8fSzSBUvV9sL5lIfbjEFHSspqdlyY6Iv_IL0oGfeGz3keXklwopSLdxadxMub20.20251118205206.20260523212820.1.yp1YaaYsDGt7MDrh2I85Kb4tLNvmYA4_ScTRTQwXdHc.1c1091d85c6b37142"
     },
     {
         "domain": ".ozon.ru",
-        "expirationDate": 1811091502.62956,
+        "expirationDate": 1811100501.09009,
         "hostOnly": false,
         "httpOnly": true,
         "name": "abt_data",
@@ -49,7 +49,7 @@
         "secure": true,
         "session": false,
         "storeId": null,
-        "value": "7.KzZW5OS5M2vWSVI_Nq5QPCnn6r9tZobOdCam2eGhbglcg-vijIuDIi77W158HvvwAk8NCasptAT3BzpUfrGLVTsvnp2k-jtY0x4OYJk6gYT9rW5LzpFYk6RoR5UuIY1unkbSYYIpffBZ1RPJYrQX2D3c_b-VcdHeiCuceN-dbL3V2GL2WacAZO3a6RvFjYTDanIOog9so0KZ-sBPeiY8HvP6QHX5yX2CAzPP4uoi36NbVQDdheWku59OEh5I_OSGlq69_Ey_5ekGmCkioOdNqBSNS9cad2zlqKM0G9UU_H5fVft28SmH94hP8OTabOFQ5cfMYj4qwkVoU49zkmVAqRZEx83L599o39_rMUZkPv3RfKtDYRZYwCxsf-9xXuZqYA-KYxbwGrVC4v8nTmaErn4O2VAnt5eKF21-VUB4c7F6a-jy0CWchEDKOwQHLVAHbt_F1rbnUudWpBTd4BAsmYA2S0DpihtNbegBc9CeiRAdL9qcPdBHi4p4oscMJ7euxaf3xLyp5jBAKN64vYvp5tKvqvv0cX23FKrQAA2jiGYFHACBJVsqatWfBp6hy5hyjoJly4cM2sClGDt5_5tsCjruOo2jynx27oOFYyIeoBI8rpttsa_Y6THhZg2udmrUCCg6jChsCMv4i-V0jsXYgs7dmjU_DoD3LVrUW6NINbqYdoeZKqNeWh98hKD3lkXrL8u_s0nJGTEvtJVVFLQ1hHxcKQb7Xw"
+        "value": "7.7GY67cvMxJbycg-8bspDZHGH9XzCWWdQqwl3DFyBimBt0Bvfx0_2VGzc0FgmUJGJb_ZCrCVZkI66tHIwrd3KB6G80nQ4ThTHFC-PIODcUYcnO61zms_8uEAVLqB6YbovBHSOG3iO-qvqfImYVq5PcLKDeydJPaS6p2RaH-evYFJjrD7J4jb-urxirAQ0fO0cO8dU8eWCNRKW7nhgQ-hXaBvhtQrd7E8u4l-bxPXViwOCSbHXOlp1rLLYEUP_wM7cIpAi9xQHJRjoNcc-DZYqj_BCx5_DwzWPEar1CpSxQEud-HGwa-QyVDxXnHEG00R81ZBT2LFOKbrAh-WAM8JltTO-62H9SvB0g9mjLaHkKpMQVzDe9IyG54L4KOvwBp6XHxVXopBC2BpUm_HoJ6hVhyrOxOoZTYUuFOtPi4bVe6tL1cHkC_uGa8XRsqQ_db0XTj2E5b5LM7KLpXEmXDIOe69W1LEuC-RGmMxiU_PFB94hs7fQ6XTXKR1vRBnZhZDJcjQ7hhNR79900BUd_xaCbb-4r14YHZEMurZVvE6DbyNPAOC-IEDVZkXrTIb9UwJBhsyepPcd1oTAXw4PB8dQoxoYEstmDUqsD9AthPZ0K-OACjbrlsUyDaCUBO_tV-jK8CrlUONXQa2t6ZaOSVr__UhEGlsZY_UFMKVlDsiGvSF2IiJdNnqk14Gv9XW9inRazkalF-cnXa0kX6uESN37N8-3ssM"
     },
     {
         "domain": ".ozon.ru",
@@ -66,7 +66,7 @@
     },
     {
         "domain": ".ozon.ru",
-        "expirationDate": 1811091340.352837,
+        "expirationDate": 1811094725.338078,
         "hostOnly": false,
         "httpOnly": true,
         "name": "__Secure-ETC",
@@ -75,11 +75,11 @@
         "secure": true,
         "session": false,
         "storeId": null,
-        "value": "7fa639246559d47ba0718e8f5d70d134"
+        "value": "5b244a3bd1bdbbc9b95ca3254cbee50c"
     },
     {
         "domain": ".ozon.ru",
-        "expirationDate": 1811091502.543383,
+        "expirationDate": 1811100501.008652,
         "hostOnly": false,
         "httpOnly": true,
         "name": "__Secure-refresh-token",
@@ -88,7 +88,7 @@
         "secure": true,
         "session": false,
         "storeId": null,
-        "value": "12.228200529.5dLQoDE9RYyYoOFwWxRrCA.26.AVAb_CIIYeeIv8UB1DLmnBQXb9BTBMmKklSVKtVOvRkLQJh0eWPyu9D7m4Ip2suk6QMiSgLTX2Vojuh4hSYNXWYMLlqkwDA4wCcoqN8jE8Rmk_TU8zIi-N-KlveIq84j-CO1nxvwIRdh88qbOPeZ1mI.20251118205206.20260523185822.1.J0KUl_9yplO6vwKM0G8s0EOlw3QCYb0klePbI7uuX00.1145d0b0c01d06cae"
+        "value": "12.228200529.5dLQoDE9RYyYoOFwWxRrCA.26.AY800TdWzCDvfZU2NVxjQAGdXecS2c4HfysqZoW-boc6awyULdk-Zk6aU8R_vkryLCsorWzId-TWGSSeAxsO43ZV8fSzSBUvV9sL5lIfbjEFHSspqdlyY6Iv_IL0oGfeGz3keXklwopSLdxadxMub20.20251118205206.20260523212820.1.q0Ry1sqNF93QhdBVu-0zX8l9IpxMOz1QYwo5DvyrTi8.11d7a5bf017940fc9"
     },
     {
         "domain": ".ozon.ru",

@@ -52,6 +52,10 @@ class OzonSettings(BaseModel):
     "How many times to retry opening a page after timeout"
     fetch_details: bool = False
     "Open each product page to read price (slower, like CLI --details)"
+    composer_search: bool = True
+    "Open search SERP in browser, then load products via composer-api (no DOM scroll)"
+    composer_raw: bool = True
+    "Fetch Ozon via composer-api HTTP; parse products on API layer (not in browser parser)"
     cookies_file: str | None = "cookies.json"
     "Path to cookies.json (relative to settings.yaml or cwd)"
 

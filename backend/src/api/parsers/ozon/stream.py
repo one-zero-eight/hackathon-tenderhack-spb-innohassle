@@ -116,3 +116,33 @@ async def iter_ozon_search(
 
     if pending:
         yield pending
+
+
+async def iter_ozon_composer_raw(
+    parser: OzonParser,
+    query: str,
+    limit: int,
+    *,
+    skip: int = 0,
+    location: str | None = None,
+) -> AsyncIterator[dict]:
+    """Open Ozon SERP in browser, then yield composer-api pages until enough products (HTTP)."""
+    if ozon_settings.fetch_details:
+        raise ValueError("ozon composer_raw is incompatible with fetch_details")
+
+    target = skip + limit
+    logger.info(
+        "Ozon composer raw stream: query=%r limit=%d skip=%d target=%d location=%r",
+        query,
+        limit,
+        skip,
+        target,
+        location,
+    )
+
+    city = resolve_ozon_city(location)
+    await parser._apply_delivery_city(city)
+    await parser.search(query)
+
+    async for page in parser.iter_composer_pages_until(target):
+        yield page

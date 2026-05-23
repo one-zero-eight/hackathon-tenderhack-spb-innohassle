@@ -1,14 +1,15 @@
 import { CityContext } from '@/context/city-context'
-import { detectCity, getDefaultCity, getPopularCities, type CityOption } from '@/lib/geo'
+import { detectCity, getCityLocation, getDefaultCity, getPopularCities, NO_CITY_OPTION, type CityOption } from '@/lib/geo'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 const STORAGE_KEY = 'selected-city-label'
 
 function readStoredCity(): CityOption | null {
   try {
-    const label = localStorage.getItem(STORAGE_KEY)
-    if (!label) return null
-    return getPopularCities().find((city) => city.label === label) ?? { id: 0, value: label, label }
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored === null) return null
+    if (stored === '') return NO_CITY_OPTION
+    return getPopularCities().find((city) => city.label === stored) ?? { id: 0, value: stored, label: stored }
   } catch {
     return null
   }
@@ -24,7 +25,7 @@ export function CityProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false
     detectCity().then((found) => {
-      if (!cancelled && found && !localStorage.getItem(STORAGE_KEY)) {
+      if (!cancelled && found && localStorage.getItem(STORAGE_KEY) === null) {
         setCityState((prev) => (sameCity(prev, found) ? prev : found))
       }
     })
@@ -37,7 +38,7 @@ export function CityProvider({ children }: { children: ReactNode }) {
     setCityState((prev) => {
       if (sameCity(prev, next)) return prev
       try {
-        localStorage.setItem(STORAGE_KEY, next.label)
+        localStorage.setItem(STORAGE_KEY, getCityLocation(next))
       } catch {
         /* ignore */
       }

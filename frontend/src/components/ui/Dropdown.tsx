@@ -166,7 +166,7 @@ const Dropdown = forwardRef<HTMLDivElement, DropdownProps>(
 
                   return (
                     <button
-                      key={option.value}
+                      key={`${option.id}:${option.value}`}
                       type="button"
                       onClick={() => handleSelect(option)}
                       onMouseEnter={() => setHoveredIndex(index)}

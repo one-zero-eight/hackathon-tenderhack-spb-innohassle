@@ -1,4 +1,6 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
+import MarketplaceLogoLink from '@/components/shared/MarketplaceLogoLink'
+import { getCityLocation } from '@/lib/geo'
 import { useMemo } from 'react'
 import { IoArrowBack, IoOpenOutline } from 'react-icons/io5'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -70,7 +72,7 @@ function ProductPage() {
   const { siteName, productId } = Route.useParams()
   const { q = '', location: locationParam } = Route.useSearch()
   const { city } = useCity()
-  const location = locationParam ?? city.label
+  const location = locationParam ?? getCityLocation(city)
   const searchParams = { query: q, location }
   const queryClient = useQueryClient()
   const cachedResult = findProductInPriceSearchCache(queryClient, siteName, productId, location)
@@ -122,15 +124,13 @@ function ProductPage() {
           <Link to="/sites" search={{ q, location }} className="text-gray flex shrink-0 items-center hover:text-black" aria-label="Назад">
             <IoArrowBack size={20} />
           </Link>
-          {site.logo ? <img src={site.logo} alt={site.name} className="h-5 w-auto shrink-0 sm:h-6" /> : <span className="shrink-0 text-base font-semibold">{site.name}</span>}
-          <span className="text-gray shrink-0">/</span>
-          <Link to="/sites/$siteName" params={{ siteName }} search={{ q, location }} className={cn('min-w-0 truncate font-medium hover:underline', accent.link)}>
-            {q || 'Все товары'}
-          </Link>
-          <span className="text-gray shrink-0">/</span>
-          <span className="min-w-0 truncate font-medium text-black" title={product.name}>
-            {product.name}
-          </span>
+          <MarketplaceLogoLink site={site} imgClassName="h-5 w-auto shrink-0 sm:h-6" fallbackClassName="shrink-0 text-base font-semibold" />
+          {q && (
+            <>
+              <span className="text-gray shrink-0">/</span>
+              <span className={cn('min-w-0 truncate font-medium')}>{q}</span>
+            </>
+          )}
         </div>
       </header>
 
@@ -141,7 +141,7 @@ function ProductPage() {
           <div className="min-w-0 space-y-6">
             <div className="border-gray-blue/60 overflow-hidden rounded-3xl border bg-white p-4 sm:p-6">
               {imageUrl ? (
-                <img src={imageUrl} alt="" referrerPolicy="no-referrer" className="mx-auto aspect-square max-h-[36rem] w-full max-w-lg rounded-2xl object-contain object-center" />
+                <img src={imageUrl} alt="" referrerPolicy="no-referrer" className="mx-auto aspect-square max-h-144 w-full max-w-lg rounded-2xl object-contain object-center" />
               ) : (
                 <div className={cn('mx-auto flex aspect-square w-full max-w-lg items-center justify-center rounded-2xl text-base font-medium', accent.imageFallback)}>Нет изображения</div>
               )}

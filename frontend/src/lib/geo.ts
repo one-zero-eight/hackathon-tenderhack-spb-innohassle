@@ -64,6 +64,12 @@ export function getDefaultCity(): CityOption {
   return getPopularCities().find((city) => city.label === 'Санкт-Петербург') ?? toCityOption('Санкт-Петербург', 2)
 }
 
+export const NO_CITY_OPTION: CityOption = { id: -1, value: '', label: 'Не указано' }
+
+export function getCityLocation(city: CityOption): string {
+  return city.value === '' ? '' : city.label
+}
+
 export function getPopularCities(): CityOption[] {
   return POPULAR_CITY_NAMES.map((name, index) => toCityOption(name, index + 1))
 }

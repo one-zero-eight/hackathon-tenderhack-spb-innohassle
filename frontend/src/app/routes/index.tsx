@@ -1,3 +1,4 @@
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import CitySelect from '@/components/shared/CitySelect'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
@@ -5,7 +6,8 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useCity } from '@/hooks/useCity'
 import { useYandexSuggest } from '@/hooks/useYandexSuggest'
 import { cn } from '@/lib/cn'
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { getCityLocation } from '@/lib/geo'
+import { pickRandomSearchExamples, pickRandomSearchPlaceholder } from '@/lib/searchExamples'
 import { useRef, useState } from 'react'
 import { IoClose, IoSearch, IoTimeOutline } from 'react-icons/io5'
 
@@ -13,9 +15,9 @@ export const Route = createFileRoute('/')({
   component: HomePage,
 })
 
-const QUICK_SEARCHES = ['samsung s26', 'шины', 'докторский халат', 'iphone 15', 'наушники', 'детский плащ'] as const
-
 function HomePage() {
+  const [quickSearches] = useState(pickRandomSearchExamples)
+  const [placeholderExample] = useState(pickRandomSearchPlaceholder)
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
   const [suggestOpen, setSuggestOpen] = useState(false)
@@ -29,7 +31,7 @@ function HomePage() {
     if (!trimmed || searching) return
     setSuggestOpen(false)
     setSearching(true)
-    void navigate({ to: '/sites', search: { q: trimmed, location: city.label } })
+    void navigate({ to: '/sites', search: { q: trimmed, location: getCityLocation(city) } })
   }
 
   const onSearch = (e: React.FormEvent) => {
@@ -61,7 +63,7 @@ function HomePage() {
               <Input
                 size="lg"
                 variant={showSuggestions ? 'outline' : 'fill'}
-                placeholder="Что ищете? Например, наушники или sasung26"
+                placeholder={`Что ищете? Например, ${placeholderExample}`}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onFocus={() => setSuggestOpen(true)}
@@ -106,10 +108,9 @@ function HomePage() {
           </div>
 
           <div className="mt-6 flex flex-col items-center gap-3">
-            <p className="text-gray text-sm font-medium">Быстрый поиск</p>
             <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
-              {QUICK_SEARCHES.map((item) => (
-                <Link key={item} to="/sites" search={{ q: item, location: city.label }} className="text-main-blue text-sm underline underline-offset-2 hover:opacity-80">
+              {quickSearches.map((item) => (
+                <Link key={item} to="/sites" search={{ q: item, location: getCityLocation(city) }} className="text-main-blue text-sm underline underline-offset-2 hover:opacity-80">
                   {item}
                 </Link>
               ))}

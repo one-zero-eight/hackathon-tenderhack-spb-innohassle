@@ -2,6 +2,7 @@ import { Link, Outlet, createFileRoute, useRouterState } from '@tanstack/react-r
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { IoArrowBack, IoGridOutline, IoListOutline, IoSearch } from 'react-icons/io5'
+import MarketplaceLogoLink from '@/components/shared/MarketplaceLogoLink'
 import { ProductCard } from '@/components/shared/ProductCard'
 import PriceRangeSlider from '@/components/shared/PriceRangeSlider'
 import { ResultsSkeleton } from '@/components/shared/ResultsSkeleton'
@@ -11,7 +12,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useCity } from '@/hooks/useCity'
 import { findSiteInPriceSearchCache, usePriceSearch } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
-import { getPopularCities } from '@/lib/geo'
+import { getCityLocation, getPopularCities, NO_CITY_OPTION } from '@/lib/geo'
 import { formatPrice, type Product, type SiteKind, type SiteResult } from '@/lib/searchResults'
 
 type CategorySearch = {
@@ -110,12 +111,18 @@ function CategoryPage() {
   const isProductRoute = useRouterState({ select: (state) => /\/sites\/[^/]+\/[^/]+/.test(state.location.pathname) })
 
   useEffect(() => {
-    if (!locationParam || city.label === locationParam) return
+    if (locationParam === undefined) return
+    const currentLocation = getCityLocation(city)
+    if (locationParam === currentLocation) return
+    if (locationParam === '') {
+      setCity(NO_CITY_OPTION)
+      return
+    }
     const fromPopular = getPopularCities().find((item) => item.label === locationParam)
     setCity(fromPopular ?? { id: 0, value: locationParam, label: locationParam })
-  }, [locationParam, city.label, setCity])
+  }, [locationParam, city.label, city.value, setCity])
 
-  const location = city.label
+  const location = getCityLocation(city)
   const queryClient = useQueryClient()
   const cachedSite = findSiteInPriceSearchCache(queryClient, siteName, location)
   const { data: priceData, isLoading, isError } = usePriceSearch({ query: q, location }, !cachedSite)
@@ -181,7 +188,7 @@ function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; 
             <Link to="/sites" search={{ q, location }} className="text-gray flex shrink-0 items-center hover:text-black" aria-label="Назад">
               <IoArrowBack size={20} />
             </Link>
-            {site.logo ? <img src={site.logo} alt={site.name} className="h-5 w-auto shrink-0 sm:h-6" /> : <span className="text-base font-semibold">{site.name}</span>}
+            <MarketplaceLogoLink site={site} imgClassName="h-5 w-auto shrink-0 sm:h-6" fallbackClassName="text-base font-semibold" />
             <span className="text-gray shrink-0">/</span>
             <span className="min-w-0 truncate font-semibold text-black">{q || 'Все товары'}</span>
             <span className={cn('shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium', accent.badge)}>{products.length} товаров</span>
@@ -195,7 +202,7 @@ function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; 
               value={localQuery}
               onChange={(e) => setLocalQuery(e.target.value)}
               leadingIcon={<IoSearch size={18} />}
-              className="border-gray-blue rounded-xl border bg-white"
+              className="border-gray-blue rounded-xl border bg-white text-black"
             />
           </div>
         </div>

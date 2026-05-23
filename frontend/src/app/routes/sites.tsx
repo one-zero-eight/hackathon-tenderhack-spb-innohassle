@@ -1,6 +1,7 @@
 import { Link, Outlet, createFileRoute, useNavigate, useRouterState } from '@tanstack/react-router'
 import { IoSearch, IoStar, IoArrowBack } from 'react-icons/io5'
 import CitySelect from '@/components/shared/CitySelect'
+import MarketplaceLogoLink from '@/components/shared/MarketplaceLogoLink'
 import { ProductCard, ViewAllCard } from '@/components/shared/ProductCard'
 import { ResultsSkeleton } from '@/components/shared/ResultsSkeleton'
 import Button from '@/components/ui/Button'
@@ -11,7 +12,7 @@ import { useYandexSearchExtended } from '@/hooks/useYandexSearchExtended'
 import { usePriceSearch, PRICE_SEARCH_LIMIT } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
 import { splitSiteResults } from '@/lib/mapSearchResults'
-import { getPopularCities } from '@/lib/geo'
+import { getCityLocation, getPopularCities, NO_CITY_OPTION } from '@/lib/geo'
 import { getQueryCorrection } from '@/lib/queryCorrection'
 import { formatPrice, formatSiteRating, type SiteResult } from '@/lib/searchResults'
 import { useVisibleProductCount } from '@/lib/useVisibleProductCount'
@@ -42,7 +43,7 @@ const categoryTone: Record<SiteResult['kind'], string> = {
 function SitesPage() {
   const { q = '', strict = false, location: locationParam } = Route.useSearch()
   const { city, setCity } = useCity()
-  const location = city.label
+  const location = getCityLocation(city)
   const isCategoryRoute = useRouterState({ select: (state) => state.location.pathname !== '/sites' })
   const navigate = useNavigate()
   const [query, setQuery] = useState(q)
@@ -61,10 +62,16 @@ function SitesPage() {
   }, [q])
 
   useEffect(() => {
-    if (!locationParam || city.label === locationParam) return
+    if (locationParam === undefined) return
+    const currentLocation = getCityLocation(city)
+    if (locationParam === currentLocation) return
+    if (locationParam === '') {
+      setCity(NO_CITY_OPTION)
+      return
+    }
     const fromPopular = getPopularCities().find((item) => item.label === locationParam)
     setCity(fromPopular ?? { id: 0, value: locationParam, label: locationParam })
-  }, [locationParam, city.label, setCity])
+  }, [locationParam, city.label, city.value, setCity])
 
   useEffect(() => {
     setCorrectionHidden(false)
@@ -98,7 +105,7 @@ function SitesPage() {
               onCityChange={(picked) => {
                 void navigate({
                   to: '/sites',
-                  search: { q, strict: strict || undefined, location: picked.label },
+                  search: { q, strict: strict || undefined, location: getCityLocation(picked) },
                   replace: true,
                 })
               }}
@@ -216,7 +223,13 @@ function SiteTitle({ site, className }: { site: SiteResult; className?: string }
   const [faviconFailed, setFaviconFailed] = useState(false)
 
   if (site.logo) {
-    return <img src={site.logo} alt={site.name} className={cn('w-auto object-contain object-left', site.kind === 'ozon' ? 'h-5 max-w-[120px] sm:h-6' : 'h-6 max-w-[160px] sm:h-7')} />
+    return (
+      <MarketplaceLogoLink
+        site={site}
+        className={className}
+        imgClassName={cn('w-auto object-contain object-left', site.kind === 'ozon' ? 'h-5 max-w-[120px] sm:h-6' : 'h-6 max-w-[160px] sm:h-7')}
+      />
+    )
   }
 
   if (site.kind === 'other') {

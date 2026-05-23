@@ -28,6 +28,17 @@ export const MARKETPLACE_LOGOS = {
   yandexMarket: 'https://upload.wikimedia.org/wikipedia/ru/e/ec/%D0%9A%D1%80%D0%B0%D1%81%D0%BD%D1%8B%D0%B9_%D0%AF%D0%BD%D0%B4%D0%B5%D0%BA%D1%81_%D0%9C%D0%B0%D1%80%D0%BA%D0%B5%D1%82%2C_2024.svg',
 } as const
 
+export const MARKETPLACE_URLS = {
+  ozon: 'https://www.ozon.ru/',
+  wildberries: 'https://www.wildberries.ru/',
+  yandex: 'https://market.yandex.ru/',
+} as const
+
+export function getMarketplaceUrl(kind: SiteKind): string | undefined {
+  if (kind === 'other') return undefined
+  return MARKETPLACE_URLS[kind]
+}
+
 export const siteResults: SiteResult[] = [
   {
     slug: 'ozon',

@@ -1,6 +1,6 @@
 import Dropdown from '@/components/ui/Dropdown'
 import { useCity } from '@/hooks/useCity'
-import { filterCities, getPopularCities, mergeCityOptions, searchCities, type CityOption } from '@/lib/geo'
+import { filterCities, getPopularCities, mergeCityOptions, NO_CITY_OPTION, searchCities, type CityOption } from '@/lib/geo'
 import { useEffect, useMemo, useState } from 'react'
 import { IoLocationSharp, IoSearch } from 'react-icons/io5'
 
@@ -46,7 +46,10 @@ export default function CitySelect({ className, onCityChange }: Props) {
     }
   }, [remoteQuery])
 
-  const options = useMemo(() => (remoteQuery ? mergeCityOptions(localOptions, remoteOptions) : localOptions), [localOptions, remoteOptions, remoteQuery])
+  const options = useMemo(() => {
+    const list = remoteQuery ? mergeCityOptions(localOptions, remoteOptions) : localOptions
+    return [NO_CITY_OPTION, ...list.filter((item) => item.value !== '')]
+  }, [localOptions, remoteOptions, remoteQuery])
 
   return (
     <Dropdown
@@ -67,7 +70,7 @@ export default function CitySelect({ className, onCityChange }: Props) {
       emptyMessage="Ничего не найдено"
       trailingIcon={<IoLocationSharp size={18} />}
       onSelect={(value) => {
-        const picked = [...options, ...popularCities, city].find((o) => o.value === value)
+        const picked = [NO_CITY_OPTION, ...options, ...popularCities, city].find((o) => o.value === value)
         if (picked) {
           setCity(picked)
           onCityChange?.(picked)

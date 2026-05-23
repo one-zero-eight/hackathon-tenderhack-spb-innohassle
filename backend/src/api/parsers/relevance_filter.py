@@ -1,18 +1,21 @@
 """
 LLM-based relevance filter for marketplace search results.
 
-Uses a local Ollama model (granite4.1:8b by default) with structured output
-to decide which products actually match the user's query.
+Two quality modes:
 
-Products are sent in small batches so that even compact models can handle
-the input without truncation or quality degradation.
+* ``"high"`` (default) — chain-of-thought: each product gets a short *reason*
+  before the boolean verdict.  More accurate, slightly slower due to extra tokens.
+* ``"low"`` — flat boolean list only.  Faster, fewer output tokens.
+
+Both modes run all batches **concurrently** (asyncio.gather + semaphore).
+Prompts are in English — compact models handle English more reliably than Russian.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Annotated
+from typing import Annotated, Literal
 
 from ollama import AsyncClient
 from pydantic import BaseModel, Field
@@ -21,71 +24,113 @@ from src.config import ollama_settings
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """\
-Ты — строгий поисковый фильтр для маркетплейсов.
-Твоя задача: для каждого товара из списка решить, соответствует ли он запросу пользователя.
+# ---------------------------------------------------------------------------
+# Prompts
+# ---------------------------------------------------------------------------
 
-ПРАВИЛА (применяй все строго):
+_SYSTEM_PROMPT_HIGH = """\
+You are a strict product relevance filter for marketplace search results.
 
-1. ТОЧНОЕ совпадение модели.
-   Если запрос содержит конкретный номер/индекс модели — все цифры и буквы \
-должны совпадать ДОСЛОВНО.
-   Примеры отклонения: запрос «Q5» → «Q5 HE», «Q5 Max» — НЕ совпадают (другой суффикс).
-   Запрос «Keychron Q5» → «Keychron V5», «Keychron Q1» — НЕ совпадают (другая серия).
-   Запрос «Samsung A54» → «Samsung A56», «Samsung A36» — НЕ совпадают (другая цифра).
-   Если запрос «Q5 Max», то «Q5 HE» — НЕ совпадает; «Q5 Max» — совпадает.
+RULES (apply all strictly):
 
-2. ТОЧНОЕ совпадение бренда.
-   Если в запросе указан бренд — бренд товара должен совпадать (регистр игнорируется).
-   Пример: запрос «Keychron Q5» → товар бренда INOI или без бренда — НЕ совпадает.
+1. EXACT model match.
+   If the query contains a specific model number — every digit and letter must
+   match EXACTLY.  A different suffix, series letter, or generation number means
+   no match.
+   Examples of rejection:
+     query "Keychron Q5"  → "Keychron Q5 Max", "Keychron Q5 HE", "Keychron V5" — NO MATCH
+     query "Keychron Q5 Max" → "Keychron Q5 HE" — NO MATCH; "Keychron Q5 Max" — MATCH
+     query "Samsung A54"  → "Samsung A56", "Samsung A55", "Samsung A36" — NO MATCH
 
-3. ТОЛЬКО сам товар, НЕ аксессуары.
-   Отклоняй чехлы, плёнки, стёкла, кабели, подставки и прочие аксессуары,
-   даже если они упоминают нужную модель в названии.
-   Пример: «Защитное стекло для Samsung A54» — ОТКЛОНИТЬ.
-   Пример: «Чехол на Keychron Q5» — ОТКЛОНИТЬ.
+2. EXACT brand match.
+   If the query specifies a brand, the product brand must match (case-insensitive).
+   Example: query "Keychron Q5" → product by INOI or with no brand — NO MATCH.
 
-4. Если запрос не содержит бренд или модель — оценивай только по типу товара.
+3. Product only — NO accessories.
+   Reject cases, films, screen protectors, cables, stands, keycaps, and any other
+   accessories, even if the target model name appears in their title.
+   Example: "Screen protector for Samsung A54" — REJECT.
+   Example: "Case for Keychron Q5" — REJECT.
+   Example: "Keycap set compatible with Q5" — REJECT.
 
-Для каждого товара: сначала укажи краткую причину (≤10 слов) в поле reason, затем relevant: true/false.
+4. If the query contains no brand or model, evaluate by product type only.
+
+For each product: write a brief reason (≤8 words) in field "reason",
+then set "relevant" to true or false.\
 """
+
+_SYSTEM_PROMPT_LOW = """\
+You are a product relevance filter for marketplace search results.
+For each product decide if it matches the user query.
+
+Rules:
+- Model number must match exactly (same digits AND letters). Different suffix = no match.
+- Brand must match if specified in the query.
+- Accessories (cases, films, cables, keycaps, stands) are NEVER relevant,
+  even when they mention the exact model name.
+- Return exactly one boolean per product, preserving input order.\
+"""
+
+# ---------------------------------------------------------------------------
+# Pydantic schemas
+# ---------------------------------------------------------------------------
 
 
 class RelevanceItem(BaseModel):
-    """Verdict for a single product."""
+    """Single verdict with chain-of-thought reason (high-quality mode)."""
 
     reason: Annotated[
         str,
-        Field(description="One-sentence explanation of the relevance decision."),
+        Field(description="Brief reason for the decision (≤8 words)."),
     ]
     relevant: Annotated[
         bool,
-        Field(description="True if the product matches the query, False otherwise."),
+        Field(description="True if the product matches the query."),
     ]
 
 
-class RelevanceBatch(BaseModel):
-    """Structured output: relevance verdicts for each product in the batch."""
+class RelevanceBatchHigh(BaseModel):
+    """Structured output for high-quality mode."""
 
     results: Annotated[
         list[RelevanceItem],
-        Field(description="Verdict for each product, in the same order as the input list."),
+        Field(description="Verdict for each product, in the same order as the input."),
     ]
 
 
-async def filter_relevant(query: str, products: list[dict]) -> list[dict]:
+class RelevanceBatchLow(BaseModel):
+    """Structured output for fast mode — boolean flags only."""
+
+    results: Annotated[
+        list[bool],
+        Field(description="Relevance flag for each product, in the same order as the input."),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+async def filter_relevant(
+    query: str,
+    products: list[dict],
+    *,
+    quality: Literal["high", "low"] = "high",
+) -> list[dict]:
     """
     Filter *products* to those relevant to *query* using a local Ollama model.
 
     Batches are scored **concurrently** (up to ``ollama_settings.concurrency``
     parallel requests) so total latency ≈ slowest single batch, not the sum.
 
-    If Ollama is unreachable or returns a malformed response the original list
-    is returned unchanged so the endpoint never fails silently.
+    Falls back to returning all products unchanged on Ollama errors.
 
     Args:
         query:    The user's original search query.
         products: Raw product dicts (must have at least a ``name`` key).
+        quality:  ``"high"`` — chain-of-thought, more accurate, slightly more tokens.
+                  ``"low"``  — flat boolean list, faster, fewer output tokens.
 
     Returns:
         Subset of *products* that the model judged relevant.
@@ -99,12 +144,12 @@ async def filter_relevant(query: str, products: list[dict]) -> list[dict]:
         for offset in range(0, len(products), batch_size)
     ]
 
-    # Limit concurrent Ollama requests to avoid overwhelming the server
     semaphore = asyncio.Semaphore(ollama_settings.concurrency)
+    score_fn = _score_batch_high if quality == "high" else _score_batch_low
 
     async def _score_with_sem(batch: list[dict]) -> list[bool]:
         async with semaphore:
-            return await _score_batch(query, batch)
+            return await score_fn(query, batch)
 
     batch_flags: list[list[bool]] = await asyncio.gather(
         *(_score_with_sem(b) for b in batches)
@@ -117,7 +162,8 @@ async def filter_relevant(query: str, products: list[dict]) -> list[dict]:
                 kept.append(product)
 
     logger.info(
-        "Relevance filter: %d/%d products kept for query %r",
+        "Relevance filter [%s]: %d/%d products kept for query %r",
+        quality,
         len(kept),
         len(products),
         query,
@@ -125,65 +171,100 @@ async def filter_relevant(query: str, products: list[dict]) -> list[dict]:
     return kept
 
 
-async def _score_batch(query: str, batch: list[dict]) -> list[bool]:
-    """Ask the LLM to score a single batch. Returns a list of booleans."""
+# ---------------------------------------------------------------------------
+# Internal batch scorers
+# ---------------------------------------------------------------------------
+
+
+def _build_user_message(query: str, batch: list[dict]) -> str:
     numbered = "\n".join(
         f"{i + 1}. «{_product_label(p)}»" for i, p in enumerate(batch)
     )
-    user_message = (
-        f"Запрос пользователя: «{query}»\n\n"
-        f"Оцени каждый товар по порядку, верни ровно {len(batch)} результата:\n"
+    return (
+        f"User query: «{query}»\n\n"
+        f"Evaluate each product in order, return exactly {len(batch)} results:\n"
         f"{numbered}"
     )
 
+
+async def _score_batch_high(query: str, batch: list[dict]) -> list[bool]:
+    """High-quality scoring: chain-of-thought reason + boolean per item."""
     try:
-        client = AsyncClient(
-            host=ollama_settings.host,
-            timeout=ollama_settings.timeout,
-        )
+        client = AsyncClient(host=ollama_settings.host, timeout=ollama_settings.timeout)
         response = await client.chat(
             model=ollama_settings.model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
+                {"role": "system", "content": _SYSTEM_PROMPT_HIGH},
+                {"role": "user", "content": _build_user_message(query, batch)},
             ],
-            format=RelevanceBatch.model_json_schema(),
+            format=RelevanceBatchHigh.model_json_schema(),
             options={"temperature": 0},
         )
-        result = RelevanceBatch.model_validate_json(response.message.content)
+        result = RelevanceBatchHigh.model_validate_json(response.message.content)
     except Exception as exc:
         logger.warning(
-            "Ollama relevance filter failed for batch of %d products (query=%r): %s — skipping filter",
+            "Ollama [high] failed for batch of %d (query=%r): %s — passing through",
             len(batch),
             query,
             exc,
         )
-        return [True] * len(batch)  # pass-through on error
+        return [True] * len(batch)
 
-    items = result.results
-
-    # Log reasoning for debugging
-    for i, item in enumerate(items):
+    for i, item in enumerate(result.results):
         logger.debug(
-            "[%d] relevant=%s | %s | reason: %s",
+            "[high][%d] relevant=%s | %s | reason: %s",
             i + 1,
             item.relevant,
             _product_label(batch[i]) if i < len(batch) else "?",
             item.reason,
         )
 
-    if len(items) != len(batch):
-        logger.warning(
-            "Ollama returned %d items for %d products — truncating/padding",
-            len(items),
-            len(batch),
-        )
-        # Truncate if too many, pad with True (pass-through) if too few
-        flags = [item.relevant for item in items[:len(batch)]]
-        flags += [True] * (len(batch) - len(flags))
-        return flags
+    return _reconcile([item.relevant for item in result.results], expected=len(batch))
 
-    return [item.relevant for item in items]
+
+async def _score_batch_low(query: str, batch: list[dict]) -> list[bool]:
+    """Fast scoring: flat boolean list, no reasoning overhead."""
+    try:
+        client = AsyncClient(host=ollama_settings.host, timeout=ollama_settings.timeout)
+        response = await client.chat(
+            model=ollama_settings.model,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT_LOW},
+                {"role": "user", "content": _build_user_message(query, batch)},
+            ],
+            format=RelevanceBatchLow.model_json_schema(),
+            options={"temperature": 0},
+        )
+        result = RelevanceBatchLow.model_validate_json(response.message.content)
+    except Exception as exc:
+        logger.warning(
+            "Ollama [low] failed for batch of %d (query=%r): %s — passing through",
+            len(batch),
+            query,
+            exc,
+        )
+        return [True] * len(batch)
+
+    return _reconcile(result.results, expected=len(batch))
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _reconcile(flags: list[bool], expected: int) -> list[bool]:
+    """Truncate or pad flag list to match the expected batch length."""
+    if len(flags) == expected:
+        return flags
+    logger.warning(
+        "Ollama returned %d flags for %d products — truncating/padding",
+        len(flags),
+        expected,
+    )
+    result = list(flags[:expected])
+    result += [True] * (expected - len(result))
+    return result
 
 
 def _product_label(product: dict) -> str:
@@ -191,8 +272,8 @@ def _product_label(product: dict) -> str:
     parts: list[str] = []
     brand = product.get("brand")
     if brand and str(brand).upper() not in ("N/A", "NONE", ""):
-        parts.append(brand)
+        parts.append(str(brand))
     name = product.get("name") or ""
     if name and name.upper() not in ("N/A", ""):
         parts.append(name)
-    return " — ".join(parts) if parts else "(без названия)"
+    return " — ".join(parts) if parts else "(no name)"

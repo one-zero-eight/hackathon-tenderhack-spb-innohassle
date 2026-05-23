@@ -47,7 +47,7 @@ async def _maybe_filter_relevant(
 ) -> list[dict]:
     if payload.bypass_relevance_filter or not batch:
         return batch
-    return await filter_relevant(query, batch)
+    return await filter_relevant(query, batch, quality=payload.relevance_quality)
 
 
 def _ozon_composer_raw_enabled(payload: PriceSearchRequest) -> bool:

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import Field
 
 from src.schemas.pydantic_base import BaseSchema
@@ -9,6 +11,14 @@ class PriceSearchRequest(BaseSchema):
     skip: int = Field(default=0, ge=0)
     bypass_spellchecker: bool = False
     bypass_relevance_filter: bool = False
+    relevance_quality: Literal["high", "low"] = Field(
+        default="high",
+        description=(
+            "Controls the relevance filter accuracy/speed trade-off. "
+            "\"high\" (default) uses chain-of-thought reasoning per product — more accurate. "
+            "\"low\" returns a flat boolean list — faster, fewer output tokens."
+        ),
+    )
     location: str | None = Field(
         default=None,
         description="City or region for regional pricing on WB, Yandex Market, and Ozon. Defaults to Moscow.",

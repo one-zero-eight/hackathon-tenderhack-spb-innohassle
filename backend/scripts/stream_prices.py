@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run twice: with the relevance filter enabled, then bypassed, and print timing overhead.",
     )
+    parser.add_argument("--relevance-quality", default="high")
     return parser.parse_args()
 
 
@@ -80,6 +81,7 @@ def main() -> int:
         "location": args.location,
         "bypass_spellchecker": args.bypass_spellchecker,
         "bypass_relevance_filter": args.bypass_relevance_filter,
+        "relevance_quality": args.relevance_quality
     }
 
     if args.compare_relevance_filter:

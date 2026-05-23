@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import _bootstrap  # noqa: F401
+
 import asyncio
 import json
+import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from extract_products import ParsedPageProducts, extract_products
+from timing import RequestTiming
 from fastapi import FastAPI, Query
 from fastapi.responses import StreamingResponse
 from query_rewrite import rewrite_query
@@ -15,6 +21,8 @@ from yandex_search import (
     init_browser_session,
     search_yandex,
 )
+
+logger = logging.getLogger(__name__)
 
 NDJSON_MEDIA_TYPE = "application/x-ndjson"
 API_PREFIX = "/search-api"
@@ -153,6 +161,11 @@ def _aggregated_results(aggregated: dict[str, list[dict]]) -> list[dict]:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(levelname)s %(name)s: %(message)s",
+        )
     await init_browser_session()
     yield
     await close_browser_session()
@@ -211,6 +224,7 @@ async def _yandex_search_stream(
     *,
     rerank: bool = False,
 ) -> AsyncIterator[str]:
+    timing = RequestTiming(label=f"yandex_search:{query!r}")
     rewritten_query = rewrite_query(query, region)
     yield _format_update({
         "type": "meta",
@@ -220,8 +234,12 @@ async def _yandex_search_stream(
     })
 
     aggregated: dict[str, list[dict]] = {}
+    serp_page = 0
     try:
+        timing.mark("yandex_started")
         async for page_results in search_yandex(query, region):
+            serp_page += 1
+            timing.mark(f"yandex_serp_{serp_page}")
             _aggregate_by_hostname(aggregated, page_results, extracted=False)
             results = _aggregated_results(aggregated)
             if rerank:
@@ -230,7 +248,9 @@ async def _yandex_search_stream(
                 "type": "page",
                 "results": results,
             })
+        timing.mark("yandex_done")
     except YandexCaptchaError as error:
+        logger.warning("[%s] %s", timing.label, error)
         print(error)
 
     if rerank:
@@ -238,9 +258,11 @@ async def _yandex_search_stream(
         yield _format_update({"type": "done", "results": final_results})
     else:
         yield _format_update({"type": "done"})
+    timing.log_summary()
 
 
 async def _yandex_extended_search_stream(query: str, region: str) -> AsyncIterator[str]:
+    timing = RequestTiming(label=f"yandex_search_extended:{query!r}")
     rewritten_query = rewrite_query(query, region)
     aggregated: dict[str, list[dict]] = {}
     aggregated_lock = asyncio.Lock()
@@ -250,6 +272,7 @@ async def _yandex_extended_search_stream(query: str, region: str) -> AsyncIterat
     in_flight_lock = asyncio.Lock()
     extraction_tasks: set[asyncio.Task[None]] = set()
     search_task: asyncio.Task[None] | None = None
+    serp_page = 0
 
     async def notify() -> None:
         await state_updates.put(None)
@@ -260,12 +283,11 @@ async def _yandex_extended_search_stream(query: str, region: str) -> AsyncIterat
 
     async def add_yandex_page(page_results: list[dict]) -> list[dict]:
         added: list[dict] = []
-        for product in page_results:
-            async with aggregated_lock:
+        async with aggregated_lock:
+            for product in page_results:
                 batch_added = _aggregate_by_hostname(aggregated, [product], extracted=False)
-            if not batch_added:
-                continue
-            added.extend(batch_added)
+                added.extend(batch_added)
+        if added:
             await notify()
         return added
 
@@ -314,42 +336,62 @@ async def _yandex_extended_search_stream(query: str, region: str) -> AsyncIterat
                 await apply_extraction(source, ParsedPageProducts())
                 return
 
-            parsed_page = await extract_products(
+            started = time.perf_counter()
+            parsed_page, extract_timings = await extract_products(
                 href,
                 query,
                 region,
                 serp_price=source.get("price"),
                 serp_thumbnail=source.get("thumbnail"),
             )
+            timing.record_extraction(
+                href=href,
+                total_s=time.perf_counter() - started,
+                fetch_s=extract_timings.fetch_s,
+                llm_s=extract_timings.llm_s,
+                ok=True,
+            )
             await apply_extraction(source, parsed_page)
         except asyncio.CancelledError:
             raise
         except Exception:
+            href = source.get("href") or "?"
+            timing.record_extraction(
+                href=href,
+                total_s=0.0,
+                ok=False,
+            )
             await apply_extraction(source, ParsedPageProducts())
         finally:
             async with in_flight_lock:
                 in_flight -= 1
             await notify()
 
-    async def schedule_extraction(source: dict) -> None:
+    async def schedule_extractions(sources: list[dict]) -> None:
         nonlocal in_flight
-
+        if not sources:
+            return
         async with in_flight_lock:
-            in_flight += 1
-
-        task = asyncio.create_task(extract_one(source))
-        extraction_tasks.add(task)
-        task.add_done_callback(extraction_tasks.discard)
+            in_flight += len(sources)
+        for source in sources:
+            task = asyncio.create_task(extract_one(source))
+            extraction_tasks.add(task)
+            task.add_done_callback(extraction_tasks.discard)
 
     async def run_search() -> None:
+        nonlocal serp_page
         try:
+            timing.mark("yandex_started")
             async for page_results in search_yandex(query, region):
+                serp_page += 1
+                timing.mark(f"yandex_serp_{serp_page}")
                 new_products = await add_yandex_page(page_results)
-                for product in new_products:
-                    await schedule_extraction(product)
+                await schedule_extractions(new_products)
+            timing.mark("yandex_done")
         except asyncio.CancelledError:
             raise
         except YandexCaptchaError as error:
+            logger.warning("[%s] %s", timing.label, error)
             print(error)
         finally:
             search_done.set()
@@ -395,6 +437,7 @@ async def _yandex_extended_search_stream(query: str, region: str) -> AsyncIterat
 
     final_results = await current_results()
     yield _format_update({"type": "done", "results": final_results})
+    timing.log_summary()
 
 
 async def _rerank_yandex_search_stream(query: str, region: str) -> AsyncIterator[str]:
@@ -434,5 +477,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=9005,
         reload=False,
-        root_path=API_PREFIX,
+        app_dir=str(Path(__file__).resolve().parent),
     )

@@ -1,8 +1,12 @@
+import _bootstrap  # noqa: F401
+
 import asyncio
+import logging
 import os
 import re
 import time
 import uuid
+from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup, Comment, Tag
@@ -13,8 +17,11 @@ from env import Config
 from query_rewrite import rewrite_query
 from yandex_search import get_browser_session
 
+logger = logging.getLogger(__name__)
+
 _MAX_PRODUCTS_PER_PAGE = 5
-PAGE_SEMAPHORE = asyncio.Semaphore(5)
+_EXTRACT_PAGE_CONCURRENCY = max(1, int(os.getenv("EXTRACT_PAGE_CONCURRENCY", "5")))
+PAGE_SEMAPHORE = asyncio.Semaphore(_EXTRACT_PAGE_CONCURRENCY)
 _PAGE_LOAD_TIMEOUT_MS = 30_000
 _JS_RENDER_TIMEOUT_MS = 15_000
 LLM_SEMAPHORE = asyncio.Semaphore(1)
@@ -187,6 +194,14 @@ class ParsedProduct(BaseModel):
     description: str | None = None
     characteristics: dict[str, str] = Field(default_factory=dict)
     thumbnail: str | None = None
+
+
+@dataclass(frozen=True)
+class ExtractTimings:
+    fetch_s: float
+    clean_s: float
+    llm_s: float
+    total_s: float
 
 
 class ParsedPageProducts(BaseModel):
@@ -629,15 +644,23 @@ async def extract_products(
     region: str = "санкт-петербург",
     serp_price: str | None = None,
     serp_thumbnail: str | None = None,
-) -> ParsedPageProducts:
-    extraction_started = time.perf_counter()
+) -> tuple[ParsedPageProducts, ExtractTimings]:
+    total_started = time.perf_counter()
+    fetch_started = time.perf_counter()
     html = await _fetch_rendered_html(url)
+    fetch_s = time.perf_counter() - fetch_started
+
+    clean_started = time.perf_counter()
     soup = BeautifulSoup(html, "html.parser")
     page_thumbnail = _parse_page_thumbnail(soup, url)
     soup = await _clean_page(soup)
+    clean_s = time.perf_counter() - clean_started
+
+    llm_s = 0.0
     if len(_page_content(soup)) < _MIN_PAGE_CONTENT_CHARS:
         result = ParsedPageProducts(message="This is not a product page.")
     else:
+        llm_started = time.perf_counter()
         result = await _extract_products(
             soup,
             user_query,
@@ -647,10 +670,21 @@ async def extract_products(
             serp_thumbnail,
             page_thumbnail,
         )
+        llm_s = time.perf_counter() - llm_started
 
-    total_seconds = time.perf_counter() - extraction_started
-    print(
-        f"extract html: {total_seconds:.2f}s total, url={url}",
-        flush=True,
+    total_s = time.perf_counter() - total_started
+    timings = ExtractTimings(
+        fetch_s=fetch_s,
+        clean_s=clean_s,
+        llm_s=llm_s,
+        total_s=total_s,
     )
-    return result
+    logger.info(
+        "extract page: total=%.2fs fetch=%.2fs clean=%.2fs llm=%.2fs url=%s",
+        total_s,
+        fetch_s,
+        clean_s,
+        llm_s,
+        url,
+    )
+    return result, timings

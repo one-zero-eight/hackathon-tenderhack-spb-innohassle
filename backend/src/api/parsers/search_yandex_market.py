@@ -21,6 +21,8 @@ YANDEX_HOME_URL = "https://market.yandex.ru/"
 YANDEX_SEARCH_URL = "https://market.yandex.ru/search"
 YANDEX_PAGE_SIZE = 8
 MAX_YANDEX_PAGES = 20
+# Moscow region (market.yandex.ru ``lr`` parameter).
+YM_MOSCOW_LR = 213
 
 
 class YandexMarketAccessError(RuntimeError):
@@ -174,7 +176,8 @@ async def parse_yandex_market_products(
     query: str,
     limit: int = 5,
     skip: int = 0,
-    location: str | None = None,
+    *,
+    lr: int = YM_MOSCOW_LR,
 ) -> list[dict]:
     """Parse Yandex Market search results asynchronously.
 
@@ -186,6 +189,7 @@ async def parse_yandex_market_products(
                   Defaults to Moscow when omitted.
     """
     lr = resolve_ym_region(location)
+
     target_count = skip + limit
     max_pages = min(
         MAX_YANDEX_PAGES,
@@ -195,12 +199,11 @@ async def parse_yandex_market_products(
     seen_products: set[str] = set()
 
     logger.info(
-        "Yandex Market parse start: query=%r limit=%d skip=%d lr=%d location=%r",
+        "Yandex Market parse start: query=%r limit=%d skip=%d lr=%d",
         query,
         limit,
         skip,
         lr,
-        location,
     )
 
     try:

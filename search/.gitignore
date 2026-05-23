@@ -2,3 +2,4 @@
 yandex_cookies.json
 __pycache__
 .venv
+data/cloak_profiles/*

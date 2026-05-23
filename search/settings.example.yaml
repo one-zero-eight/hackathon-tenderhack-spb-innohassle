@@ -1,0 +1,9 @@
+yandex_search_settings:
+  # false — видимое окно, можно пройти капчу вручную (рекомендуется локально)
+  headless: false
+  humanize: false
+  geoip: true
+  # Same format as backend ozon_settings.proxy / proxies (SOCKS5)
+  proxy: null
+  proxies:
+    - "user:pass@host:port"

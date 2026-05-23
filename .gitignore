@@ -3,6 +3,8 @@
 .DS_Store
 .idea
 
-backend/data/*
+search/data/*
 
 backend/cookies.json
+
+settings.yaml

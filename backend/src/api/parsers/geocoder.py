@@ -26,11 +26,7 @@ class _MarketplaceLocation:
 
 _LOCATIONS: tuple[_MarketplaceLocation, ...] = (
     _MarketplaceLocation(("москва", "moscow"), -1257786, 213),
-    _MarketplaceLocation(
-        ("санкт-петербург", "петербург", "питер", "saint petersburg", "st. petersburg"),
-        -158257,
-        2,
-    ),
+    _MarketplaceLocation(("санкт-петербург", "петербург", "питер", "saint petersburg", "st. petersburg"), -158257, 2),
     _MarketplaceLocation(("новосибирск", "novosibirsk"), -1254478, 65),
     _MarketplaceLocation(("екатеринбург", "yekaterinburg", "ekaterinburg"), -1256682, 54),
     _MarketplaceLocation(("казань", "kazan", "иннополис", "innopolis"), -2133462, 43),

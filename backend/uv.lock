@@ -159,12 +159,19 @@ wheels = [
 ]
 
 [[package]]
+name = "autocorrect"
+version = "2.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/cb/55fd549def80011b09dbd7bef6ad06ec4453745294bcfe6c63a270070046/autocorrect-2.6.1.tar.gz", hash = "sha256:2bc68192dc645b44bece2613caac338e93548c3dac9c563095b27224c7fd4391", size = 622775, upload-time = "2021-12-04T20:33:56.928Z" }
+
+[[package]]
 name = "backend"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
+    { name = "autocorrect" },
     { name = "bcrypt" },
     { name = "colorlog" },
     { name = "fake-useragent" },
@@ -194,6 +201,7 @@ dependencies = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.16.5" },
     { name = "asyncpg", specifier = ">=0.30.0" },
+    { name = "autocorrect", specifier = ">=2.6.1" },
     { name = "bcrypt", specifier = ">=4.3.0" },
     { name = "colorlog", specifier = ">=6.9.0" },
     { name = "fake-useragent", specifier = ">=2.0.3" },

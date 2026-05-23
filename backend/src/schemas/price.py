@@ -7,6 +7,7 @@ class PriceSearchRequest(BaseSchema):
     query: str = Field(..., min_length=1)
     limit: int = Field(default=5, ge=1, le=100)
     skip: int = Field(default=0, ge=0)
+    bypass_spellchecker: bool = False
     location: str | None = Field(
         default=None,
         description="City or region name for location-based pricing (e.g. 'Санкт-Петербург', 'Novosibirsk'). Defaults to Moscow when omitted.",
@@ -31,4 +32,5 @@ class MarketplacePriceResult(BaseSchema):
 
 class PriceSearchResponse(BaseSchema):
     query: str
+    fixed_query: str | None = None
     results: list[MarketplacePriceResult]

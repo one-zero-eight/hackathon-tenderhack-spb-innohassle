@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 from autocorrect import Speller
 
@@ -13,7 +15,15 @@ SPELLER_URL = "https://speller.yandex.net/services/spellservice.json/checkText"
 SPELLER_LANG = "ru,en"
 SPELLER_TIMEOUT = 5.0
 
-_offline_speller = Speller("ru", fast=True)
+logger = logging.getLogger(__name__)
+_offline_speller: Speller | None = None
+
+
+def _get_offline_speller() -> Speller:
+    global _offline_speller  # noqa: PLW0603
+    if _offline_speller is None:
+        _offline_speller = Speller("ru", fast=True)
+    return _offline_speller
 
 
 def _apply_speller_corrections(text: str, corrections: list[dict]) -> str:
@@ -37,7 +47,8 @@ def spellcheck_yandex(text: str) -> str:
 
 
 def spellcheck_offline(text: str) -> str:
-    return " ".join(_offline_speller(token) for token in text.split())
+    offline_speller = _get_offline_speller()
+    return " ".join(offline_speller(token) for token in text.split())
 
 
 def spellcheck(text: str) -> str:
@@ -48,4 +59,8 @@ def spellcheck(text: str) -> str:
     try:
         return spellcheck_yandex(text)
     except (httpx.HTTPError, httpx.TimeoutException):
-        return spellcheck_offline(text)
+        try:
+            return spellcheck_offline(text)
+        except Exception as exc:
+            logger.warning("Offline spellcheck failed: %s", exc)
+            return text

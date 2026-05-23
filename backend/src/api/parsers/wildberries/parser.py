@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import random
+from collections.abc import AsyncIterator
 from urllib.parse import quote_plus
 
 from selenium_driverless.webdriver import Chrome
@@ -16,6 +17,7 @@ from src.api.parsers.wildberries.navigation import safe_get
 
 logger = logging.getLogger(__name__)
 
+WB_STREAM_BATCH_SIZE = 10
 WB_HOME = "https://www.wildberries.ru/"
 WB_SEARCH = "https://www.wildberries.ru/catalog/0/search.aspx?search="
 CHALLENGE_MARKERS = ("почти готов",)
@@ -310,6 +312,27 @@ class WildberriesSeleniumParser:
             url=search_url,
         )
 
+    def _raw_item_to_product(self, item: dict) -> dict | None:
+        sale_price = parse_rub_price(item.get("priceText"))
+        if sale_price is None:
+            return None
+        url = item.get("url")
+        if url and url.startswith("/"):
+            url = f"https://www.wildberries.ru{url}"
+        return {
+            "name": item.get("name"),
+            "brand": _clean_text(item.get("brand")),
+            "sale_price": sale_price,
+            "original_price": parse_rub_price(item.get("originalPriceText")),
+            "url": url,
+            "image_url": item.get("image_url"),
+            "source": "Wildberries",
+        }
+
+    async def _extract_raw_cards(self) -> list[dict]:
+        raw = await safe_execute_script(self._d, WB_EXTRACT_JS, 10_000, 0)
+        return raw if isinstance(raw, list) else []
+
     async def _extract_products(self, limit: int, skip: int) -> list[dict]:
         raw = await safe_execute_script(self._d, WB_EXTRACT_JS, limit, skip)
         if not isinstance(raw, list):
@@ -317,26 +340,95 @@ class WildberriesSeleniumParser:
 
         products: list[dict] = []
         for item in raw:
-            sale_price = parse_rub_price(item.get("priceText"))
-            if sale_price is None:
+            product = self._raw_item_to_product(item)
+            if product is None:
                 continue
-            url = item.get("url")
-            if url and url.startswith("/"):
-                url = f"https://www.wildberries.ru{url}"
-            products.append(
-                {
-                    "name": item.get("name"),
-                    "brand": _clean_text(item.get("brand")),
-                    "sale_price": sale_price,
-                    "original_price": parse_rub_price(item.get("originalPriceText")),
-                    "url": url,
-                    "image_url": item.get("image_url"),
-                    "source": "Wildberries",
-                }
-            )
+            products.append(product)
             if len(products) >= limit:
                 break
         return products
+
+    async def iter_products(
+        self,
+        keyword: str,
+        limit: int,
+        *,
+        skip: int = 0,
+        dest: int = -1257786,
+        batch_size: int = WB_STREAM_BATCH_SIZE,
+    ) -> AsyncIterator[list[dict]]:
+        logger.info("Wildberries stream: %r (dest=%d)", keyword, dest)
+        await self._open_search_page(keyword, dest=dest)
+        target_cards = skip + limit
+        max_rounds = self._scroll_rounds_for_target(target_cards)
+        seen_keys: set[str] = set()
+        skipped_count = 0
+        emitted = 0
+        pending: list[dict] = []
+        stale = 0
+        prev_count = 0
+
+        def drain_batches(*, force: bool = False) -> list[list[dict]]:
+            nonlocal pending
+            batches: list[list[dict]] = []
+            while len(pending) >= batch_size:
+                batches.append(pending[:batch_size])
+                pending = pending[batch_size:]
+            if force and pending:
+                batches.append(pending)
+                pending = []
+            return batches
+
+        for rnd in range(max_rounds):
+            for item in await self._extract_raw_cards():
+                product = self._raw_item_to_product(item)
+                if product is None:
+                    continue
+                key = product.get("url") or str(product.get("name"))
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+
+                if skipped_count < skip:
+                    skipped_count += 1
+                    continue
+                if emitted >= limit:
+                    for batch in drain_batches(force=True):
+                        yield batch
+                    return
+
+                pending.append(product)
+                emitted += 1
+                for batch in drain_batches():
+                    yield batch
+                if emitted >= limit:
+                    for batch in drain_batches(force=True):
+                        yield batch
+                    return
+
+            count = await self._count_product_cards()
+            if count >= target_cards:
+                break
+            if count == prev_count:
+                stale += 1
+            else:
+                stale = 0
+            prev_count = count
+            if stale >= 2:
+                break
+            if rnd + 1 < max_rounds:
+                await safe_execute_script(self._d, WB_SCROLL_JS)
+                await asyncio.sleep(random.uniform(0.45, 0.85))
+
+        for batch in drain_batches(force=True):
+            yield batch
+
+        logger.info(
+            "Wildberries stream done for %r (limit=%d): %d items",
+            keyword,
+            limit,
+            emitted,
+        )
 
     async def run(
         self,
@@ -347,10 +439,9 @@ class WildberriesSeleniumParser:
         dest: int = -1257786,
     ) -> list[dict]:
         logger.info("Wildberries search: %r (dest=%d)", keyword, dest)
-        await self._open_search_page(keyword, dest=dest)
-        target_cards = skip + limit
-        await self._scroll_to_load_cards(target_cards)
-        products = await self._extract_products(limit, skip)
+        products: list[dict] = []
+        async for batch in self.iter_products(keyword, limit, skip=skip, dest=dest, batch_size=limit):
+            products.extend(batch)
         logger.info(
             "Wildberries parse done for %r (limit=%d): %d items",
             keyword,

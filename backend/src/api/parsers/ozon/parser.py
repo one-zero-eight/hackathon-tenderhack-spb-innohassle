@@ -4,6 +4,7 @@ import asyncio
 import logging
 import random
 import re
+from collections.abc import AsyncIterator
 from pathlib import Path
 from urllib.parse import quote
 
@@ -466,11 +467,17 @@ class OzonParser:
         rounds = (limit + items_per_scroll - 1) // items_per_scroll + 2
         return max(3, min(rounds, 30))
 
-    async def collect_products(self, limit: int) -> list[dict]:
+    async def collect_products_batched(
+        self,
+        limit: int,
+        *,
+        batch_size: int = 10,
+    ) -> AsyncIterator[list[dict]]:
         ordered: list[dict] = []
         seen: set[str] = set()
         stale = 0
         prev_total = 0
+        last_sent = 0
         max_rounds = self._scroll_rounds_for_limit(limit)
 
         logger.info("Прокрутка выдачи для %d товаров (до %d раундов)...", limit, max_rounds)
@@ -482,6 +489,19 @@ class OzonParser:
             composer_by_url = await self._fetch_composer_by_url()
         except Exception as exc:
             logger.warning("Ozon composer-api fetch failed: %s", exc)
+
+        def emit_pending(force: bool = False) -> list[list[dict]]:
+            nonlocal last_sent
+            batches: list[list[dict]] = []
+            while len(ordered) - last_sent >= batch_size:
+                chunk = ordered[last_sent : last_sent + batch_size]
+                last_sent += batch_size
+                batches.append(chunk)
+            if force and last_sent < len(ordered):
+                chunk = ordered[last_sent:]
+                last_sent = len(ordered)
+                batches.append(chunk)
+            return batches
 
         for rnd in range(max_rounds):
             if rnd > 0 and await self._is_blocked():
@@ -498,7 +518,9 @@ class OzonParser:
                 row = self._enrich_listing_item({**item, "url": url}, composer_by_url)
                 ordered.append(row)
                 if len(ordered) >= limit:
-                    return ordered[:limit]
+                    for batch in emit_pending(force=True):
+                        yield batch
+                    return
 
             if composer_by_url and len(ordered) < limit:
                 for url, composer in composer_by_url.items():
@@ -515,7 +537,12 @@ class OzonParser:
                         }
                     )
                     if len(ordered) >= limit:
-                        return ordered[:limit]
+                        for batch in emit_pending(force=True):
+                            yield batch
+                        return
+
+            for batch in emit_pending():
+                yield batch
 
             if len(ordered) == prev_total:
                 stale += 1
@@ -532,7 +559,14 @@ class OzonParser:
             if rnd + 1 < max_rounds:
                 await self._scroll_step()
 
-        return ordered[:limit]
+        for batch in emit_pending(force=True):
+            yield batch
+
+    async def collect_products(self, limit: int) -> list[dict]:
+        items: list[dict] = []
+        async for batch in self.collect_products_batched(limit, batch_size=limit):
+            items.extend(batch)
+        return items[:limit]
 
     async def _parse_product_page(self, url: str, listing: dict, position: int) -> ProductResult:
         logger.info("[%d] Карточка: %s", position, url)

@@ -1,17 +1,46 @@
 import asyncio
+import json
+import logging
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from fastapi_derive_responses import AutoDeriveResponsesAPIRoute
 
-from src.api.parsers import parse_ozon_products, parse_wildberries_products, parse_yandex_market_products
+from src.api.parsers import iter_ozon_products, iter_wildberries_products, iter_yandex_market_products
 from src.api.parsers.spellcheck import spellcheck
-from src.schemas import MarketplacePriceResult, PriceSearchRequest, PriceSearchResponse, ProductPrice
+from src.schemas import PriceSearchRequest, ProductPrice
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/prices", tags=["Prices"], route_class=AutoDeriveResponsesAPIRoute)
 
+NDJSON_MEDIA_TYPE = "application/x-ndjson"
+STREAM_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
+YANDEX_SOURCE = "Yandex Market"
+WILDBERRIES_SOURCE = "Wildberries"
+OZON_SOURCE = "Ozon"
+
+
+def _ndjson_line(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False) + "\n"
+
 
 @router.post("/search")
-async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
+async def search_prices(payload: PriceSearchRequest) -> StreamingResponse:
+    return StreamingResponse(
+        _price_search_stream(payload),
+        media_type=NDJSON_MEDIA_TYPE,
+        headers=STREAM_HEADERS,
+    )
+
+
+async def _price_search_stream(payload: PriceSearchRequest) -> AsyncIterator[str]:
     query = payload.query
     fixed_query: str | None = None
     if not payload.bypass_spellchecker:
@@ -19,100 +48,131 @@ async def search_prices(payload: PriceSearchRequest) -> PriceSearchResponse:
         if query != payload.query:
             fixed_query = query
 
-    yandex_result, wildberries_result, ozon_result = await asyncio.gather(
-        parse_yandex_market_products(
-            query,
-            payload.limit,
-            payload.skip,
-            location=payload.location,
-        ),
-        parse_wildberries_products(
-            query,
-            payload.limit,
-            payload.skip,
-            location=payload.location,
-        ),
-        parse_ozon_products(
-            query,
-            payload.limit,
-            payload.skip,
-            location=payload.location,
-        ),
-        return_exceptions=True,
+    yield _ndjson_line(
+        {
+            "type": "meta",
+            "query": payload.query,
+            "fixed_query": fixed_query,
+        },
     )
 
-    return PriceSearchResponse(
-        query=payload.query,
-        fixed_query=fixed_query,
-        results=[
-            _build_yandex_market_result(yandex_result),
-            _build_wildberries_result(wildberries_result),
-            _build_ozon_result(ozon_result),
-        ],
+    queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue()
+    sources_done = 0
+
+    async def pump_yandex() -> None:
+        try:
+            async for batch in iter_yandex_market_products(
+                query,
+                payload.limit,
+                payload.skip,
+                location=payload.location,
+            ):
+                prices = _products_from_raw(YANDEX_SOURCE, batch)
+                if prices:
+                    await queue.put(
+                        (
+                            "batch",
+                            {"source": YANDEX_SOURCE, "prices": prices},
+                        ),
+                    )
+            await queue.put(("source_done", {"source": YANDEX_SOURCE, "error": None}))
+        except Exception as exc:
+            logger.exception("Yandex Market stream error for %r", query)
+            await queue.put(
+                ("source_done", {"source": YANDEX_SOURCE, "error": str(exc)}),
+            )
+
+    async def pump_wildberries() -> None:
+        try:
+            async for batch in iter_wildberries_products(
+                query,
+                payload.limit,
+                payload.skip,
+                location=payload.location,
+            ):
+                prices = _products_from_raw(WILDBERRIES_SOURCE, batch)
+                if prices:
+                    await queue.put(
+                        (
+                            "batch",
+                            {"source": WILDBERRIES_SOURCE, "prices": prices},
+                        ),
+                    )
+            await queue.put(("source_done", {"source": WILDBERRIES_SOURCE, "error": None}))
+        except Exception as exc:
+            logger.exception("Wildberries stream error for %r", query)
+            await queue.put(
+                ("source_done", {"source": WILDBERRIES_SOURCE, "error": str(exc)}),
+            )
+
+    async def pump_ozon() -> None:
+        try:
+            async for batch in iter_ozon_products(
+                query,
+                payload.limit,
+                payload.skip,
+                location=payload.location,
+            ):
+                prices = _products_from_raw(OZON_SOURCE, batch)
+                if prices:
+                    await queue.put(
+                        (
+                            "batch",
+                            {"source": OZON_SOURCE, "prices": prices},
+                        ),
+                    )
+            await queue.put(("source_done", {"source": OZON_SOURCE, "error": None}))
+        except Exception as exc:
+            logger.exception("Ozon stream error for %r", query)
+            await queue.put(
+                ("source_done", {"source": OZON_SOURCE, "error": str(exc)}),
+            )
+
+    tasks = [
+        asyncio.create_task(pump_yandex()),
+        asyncio.create_task(pump_wildberries()),
+        asyncio.create_task(pump_ozon()),
+    ]
+
+    try:
+        while sources_done < 3:
+            event_type, data = await queue.get()
+            yield _ndjson_line({"type": event_type, **data})
+            if event_type == "source_done":
+                sources_done += 1
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    yield _ndjson_line(
+        {
+            "type": "done",
+            "query": payload.query,
+            "fixed_query": fixed_query,
+        },
     )
 
 
-def _build_yandex_market_result(result: list[dict] | BaseException) -> MarketplacePriceResult:
-    source = "Yandex Market"
-    if isinstance(result, BaseException):
-        return MarketplacePriceResult(source=source, prices=[], error=str(result))
-
-    prices = [
-        ProductPrice(
-            source=source,
-            name=item.get("name"),
-            brand=_optional_brand(item.get("brand")),
-            price=float(item["sale_price"]),
-            original_price=_optional_float(item.get("original_price")),
-            url=_optional_str(item.get("url")),
-            image_url=_optional_str(item.get("image_url")),
+def _products_from_raw(source: str, items: list[dict]) -> list[dict]:
+    prices: list[dict] = []
+    for item in items:
+        sale_price = item.get("sale_price")
+        if sale_price is None:
+            continue
+        prices.append(
+            ProductPrice(
+                source=source,
+                name=item.get("name"),
+                brand=_optional_brand(item.get("brand")),
+                price=float(sale_price),
+                original_price=_optional_float(item.get("original_price")),
+                url=_optional_str(item.get("url")),
+                image_url=_optional_str(item.get("image_url")),
+            ).model_dump(mode="json"),
         )
-        for item in result
-        if item.get("sale_price") is not None
-    ]
-    return MarketplacePriceResult(source=source, prices=prices)
-
-
-def _build_ozon_result(result: list[dict] | BaseException) -> MarketplacePriceResult:
-    source = "Ozon"
-    if isinstance(result, BaseException):
-        return MarketplacePriceResult(source=source, prices=[], error=str(result))
-
-    prices = [
-        ProductPrice(
-            source=source,
-            name=item.get("name"),
-            brand=_optional_brand(item.get("brand")),
-            price=_optional_float(item.get("sale_price")),
-            original_price=_optional_float(item.get("original_price")),
-            url=_optional_str(item.get("url")),
-            image_url=_optional_str(item.get("image_url")),
-        )
-        for item in result
-        if item.get("sale_price") is not None
-    ]
-    return MarketplacePriceResult(source=source, prices=prices)
-
-
-def _build_wildberries_result(result: list[dict] | BaseException) -> MarketplacePriceResult:
-    source = "Wildberries"
-    if isinstance(result, BaseException):
-        return MarketplacePriceResult(source=source, prices=[], error=str(result))
-
-    prices = [
-        ProductPrice(
-            source=source,
-            name=item.get("name"),
-            brand=_optional_brand(item.get("brand")),
-            price=float(item["sale_price"]),
-            original_price=_optional_float(item.get("original_price")),
-            url=_optional_str(item.get("url")),
-            image_url=_optional_str(item.get("image_url")),
-        )
-        for item in result
-        if item.get("sale_price") is not None
-    ]
-    return MarketplacePriceResult(source=source, prices=prices)
+    return prices
 
 
 def _optional_brand(value: object) -> str | None:

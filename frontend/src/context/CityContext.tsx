@@ -1,6 +1,6 @@
 import { CityContext } from '@/context/city-context'
 import { detectCity, getCityLocation, getDefaultCity, getPopularCities, NO_CITY_OPTION, type CityOption } from '@/lib/geo'
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 
 const STORAGE_KEY = 'selected-city-label'
 
@@ -21,14 +21,22 @@ function sameCity(a: CityOption, b: CityOption): boolean {
 
 export function CityProvider({ children }: { children: ReactNode }) {
   const [city, setCityState] = useState<CityOption>(() => readStoredCity() ?? getDefaultCity())
+  const detectionStarted = useRef(false)
 
-  useEffect(() => {
+  const runCityDetection = useCallback(() => {
+    if (detectionStarted.current) return
+    if (typeof window === 'undefined') return
+    if (localStorage.getItem(STORAGE_KEY) !== null) return
+
+    detectionStarted.current = true
     let cancelled = false
+
     detectCity().then((found) => {
-      if (!cancelled && found && localStorage.getItem(STORAGE_KEY) === null) {
+      if (!cancelled && found) {
         setCityState((prev) => (sameCity(prev, found) ? prev : found))
       }
     })
+
     return () => {
       cancelled = true
     }
@@ -46,7 +54,7 @@ export function CityProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const value = useMemo(() => ({ city, setCity }), [city, setCity])
+  const value = useMemo(() => ({ city, setCity, runCityDetection }), [city, setCity, runCityDetection])
 
   return <CityContext.Provider value={value}>{children}</CityContext.Provider>
 }

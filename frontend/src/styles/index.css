@@ -14,6 +14,14 @@
   }
 }
 
+@layer utilities {
+  /* Tint colored marketplace logos to --color-main-blue (#264b82) */
+  .logo-tint-blue {
+    filter: brightness(0) saturate(100%) invert(24%) sepia(45%) saturate(1500%) hue-rotate(186deg)
+      brightness(0.9) contrast(0.92);
+  }
+}
+
 @keyframes progress-stripes-move {
   0% {
     background-position: 0 0;

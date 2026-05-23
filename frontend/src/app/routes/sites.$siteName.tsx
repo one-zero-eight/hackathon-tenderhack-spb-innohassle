@@ -1,5 +1,4 @@
 import { Link, Outlet, createFileRoute, useRouterState } from '@tanstack/react-router'
-import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { IoArrowBack, IoGridOutline, IoListOutline, IoSearch, IoDownloadOutline } from 'react-icons/io5'
 import MarketplaceLogoLink from '@/components/shared/MarketplaceLogoLink'
@@ -10,10 +9,11 @@ import SortDropdown from '@/components/shared/SortDropdown'
 import Input from '@/components/ui/Input'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useCity } from '@/hooks/useCity'
-import { findSiteInPriceSearchCache, usePriceSearch } from '@/hooks/usePriceSearch'
+import { usePriceSearch } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
 import { getCityLocation, getPopularCities, NO_CITY_OPTION } from '@/lib/geo'
 import { exportSiteProductsToCsv } from '@/lib/exportCsv'
+import { filterProductsByLocalSearch } from '@/lib/productLocalSearch'
 import { formatPrice, type Product, type SiteKind, type SiteResult } from '@/lib/searchResults'
 
 type CategorySearch = {
@@ -114,29 +114,27 @@ function CategoryPage() {
   const { siteName } = Route.useParams()
   const { q = '', location: locationParam } = Route.useSearch()
   const { city, setCity } = useCity()
+  const cityLocation = getCityLocation(city)
   const isProductRoute = useRouterState({ select: (state) => /\/sites\/[^/]+\/[^/]+/.test(state.location.pathname) })
 
   useEffect(() => {
     if (locationParam === undefined) return
-    const currentLocation = getCityLocation(city)
-    if (locationParam === currentLocation) return
+    if (locationParam === cityLocation) return
     if (locationParam === '') {
       setCity(NO_CITY_OPTION)
       return
     }
     const fromPopular = getPopularCities().find((item) => item.label === locationParam)
     setCity(fromPopular ?? { id: 0, value: locationParam, label: locationParam })
-  }, [locationParam, city.label, city.value, setCity])
+  }, [locationParam, cityLocation, setCity])
 
-  const location = getCityLocation(city)
-  const queryClient = useQueryClient()
-  const cachedSite = findSiteInPriceSearchCache(queryClient, siteName, location)
-  const { data: priceData, isLoading, isError } = usePriceSearch({ query: q, location }, !cachedSite)
-  const site = cachedSite ?? priceData?.sites.find((item) => item.slug === siteName)
+  const location = locationParam !== undefined ? locationParam : cityLocation
+  const { data: priceData, isLoading, isError } = usePriceSearch({ query: q, location })
+  const site = priceData?.sites.find((item) => item.slug === siteName)
 
   if (isProductRoute) return <Outlet />
 
-  if (!cachedSite && isLoading) {
+  if (isLoading && !site) {
     return (
       <div className="min-h-screen bg-white p-6">
         <div className="text-gray mx-auto flex max-w-7xl items-center justify-center gap-2 py-12">
@@ -175,10 +173,8 @@ function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; 
 
   const products = useMemo(() => {
     const filtered = filterProducts(site.products, minPrice, maxPrice)
-    const sorted = sortProducts(filtered, sort)
-    const needle = localQuery.trim().toLowerCase()
-    if (!needle) return sorted
-    return sorted.filter((product) => product.name.toLowerCase().includes(needle))
+    const byKeywords = filterProductsByLocalSearch(filtered, localQuery)
+    return sortProducts(byKeywords, sort)
   }, [site.products, minPrice, maxPrice, sort, localQuery])
 
   const resetFilters = () => {

@@ -44,7 +44,8 @@ const categoryTone: Record<SiteResult['kind'], string> = {
 function SitesPage() {
   const { q = '', strict = false, location: locationParam } = Route.useSearch()
   const { city, setCity } = useCity()
-  const location = getCityLocation(city)
+  const cityLocation = getCityLocation(city)
+  const location = locationParam !== undefined ? locationParam : cityLocation
   const isCategoryRoute = useRouterState({ select: (state) => state.location.pathname !== '/sites' })
   const navigate = useNavigate()
   const [query, setQuery] = useState(q)
@@ -55,8 +56,8 @@ function SitesPage() {
   const sites = priceData?.sites ?? []
   const effectiveQuery = priceData?.effectiveQuery ?? q.trim()
   const correction = priceData ? getQueryCorrection(q, priceData.fixedQuery, strict) : null
-  const streamEnabled = hasQuery && effectiveQuery.length > 0
-  const { sites: otherSiteResults, loading: otherLoading, error: otherError } = useYandexSearchExtended(effectiveQuery, location, streamEnabled)
+  const streamEnabled = hasQuery && q.trim().length > 0
+  const { sites: otherSiteResults, loading: otherLoading, error: otherError } = useYandexSearchExtended(q, location, streamEnabled)
 
   useEffect(() => {
     setQuery(q)
@@ -64,15 +65,14 @@ function SitesPage() {
 
   useEffect(() => {
     if (locationParam === undefined) return
-    const currentLocation = getCityLocation(city)
-    if (locationParam === currentLocation) return
+    if (locationParam === cityLocation) return
     if (locationParam === '') {
       setCity(NO_CITY_OPTION)
       return
     }
     const fromPopular = getPopularCities().find((item) => item.label === locationParam)
     setCity(fromPopular ?? { id: 0, value: locationParam, label: locationParam })
-  }, [locationParam, city.label, city.value, setCity])
+  }, [locationParam, cityLocation, setCity])
 
   useEffect(() => {
     setCorrectionHidden(false)
@@ -99,7 +99,7 @@ function SitesPage() {
     <div className="min-h-screen bg-white px-4 py-12 sm:px-6">
       <header className="mx-auto mb-8 max-w-7xl">
         <div className="mb-3 flex justify-between">
-          <Link to="/" className="flex items-center gap-2 hover:underline">
+          <Link to="/search" className="flex items-center gap-2 hover:underline">
             <IoArrowBack size={20} /> Назад
           </Link>
           <div className="relative z-10">
@@ -147,15 +147,9 @@ function SitesPage() {
             {isLoading && !hasMainProducts ? <div className="bg-pale-blue mt-2 h-8 w-56 max-w-full animate-pulse rounded-lg" /> : <h1 className="text-2xl font-semibold text-black">{effectiveQuery || 'Все товары'}</h1>}
           </div>
           {exportableCount > 0 && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="inline-flex items-center gap-2 rounded-xl"
-              onClick={() => exportSitesToCsv(allSitesForExport, { query: effectiveQuery })}
-            >
+            <Button type="button" variant="outline" size="sm" className="inline-flex items-center gap-2 rounded-lg" onClick={() => exportSitesToCsv(allSitesForExport, { query: effectiveQuery })}>
               <IoDownloadOutline size={18} />
-              Экспорт CSV ({exportableCount})
+              Экспорт ({exportableCount})
             </Button>
           )}
         </div>
@@ -240,13 +234,7 @@ function SiteTitle({ site, className }: { site: SiteResult; className?: string }
   const [faviconFailed, setFaviconFailed] = useState(false)
 
   if (site.logo) {
-    return (
-      <MarketplaceLogoLink
-        site={site}
-        className={className}
-        imgClassName={cn('w-auto object-contain object-left', site.kind === 'ozon' ? 'h-5 max-w-[120px] sm:h-6' : 'h-6 max-w-[160px] sm:h-7')}
-      />
-    )
+    return <MarketplaceLogoLink site={site} className={className} imgClassName={cn('w-auto object-contain object-left', site.kind === 'ozon' ? 'h-5 max-w-[120px] sm:h-6' : 'h-6 max-w-[160px] sm:h-7')} />
   }
 
   if (site.kind === 'other') {
@@ -295,7 +283,21 @@ function siteSectionPropsEqual(
   )
 }
 
-const SiteSection = memo(function SiteSection({ site, query, location, external = false, pricesLoading = false, productLimit }: { site: SiteResult; query: string; location: string; external?: boolean; pricesLoading?: boolean; productLimit?: number }) {
+const SiteSection = memo(function SiteSection({
+  site,
+  query,
+  location,
+  external = false,
+  pricesLoading = false,
+  productLimit,
+}: {
+  site: SiteResult
+  query: string
+  location: string
+  external?: boolean
+  pricesLoading?: boolean
+  productLimit?: number
+}) {
   const visibleCount = useVisibleProductCount()
   const products = site.products.slice(0, visibleCount)
   const pricedProducts = site.products.filter((product) => product.price > 0)

@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root';
 import { Route as SitesRouteImport } from './routes/sites';
+import { Route as SearchRouteImport } from './routes/search';
 import { Route as IndexRouteImport } from './routes/index';
 import { Route as SitesSiteNameRouteImport } from './routes/sites.$siteName';
 import { Route as SitesSiteNameProductIdRouteImport } from './routes/sites.$siteName.$productId';
@@ -17,6 +18,11 @@ import { Route as SitesSiteNameProductIdRouteImport } from './routes/sites.$site
 const SitesRoute = SitesRouteImport.update({
   id: '/sites',
   path: '/sites',
+  getParentRoute: () => rootRouteImport,
+} as any);
+const SearchRoute = SearchRouteImport.update({
+  id: '/search',
+  path: '/search',
   getParentRoute: () => rootRouteImport,
 } as any);
 const IndexRoute = IndexRouteImport.update({
@@ -37,12 +43,14 @@ const SitesSiteNameProductIdRoute = SitesSiteNameProductIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute;
+  '/search': typeof SearchRoute;
   '/sites': typeof SitesRouteWithChildren;
   '/sites/$siteName': typeof SitesSiteNameRouteWithChildren;
   '/sites/$siteName/$productId': typeof SitesSiteNameProductIdRoute;
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute;
+  '/search': typeof SearchRoute;
   '/sites': typeof SitesRouteWithChildren;
   '/sites/$siteName': typeof SitesSiteNameRouteWithChildren;
   '/sites/$siteName/$productId': typeof SitesSiteNameProductIdRoute;
@@ -50,6 +58,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   '/': typeof IndexRoute;
+  '/search': typeof SearchRoute;
   '/sites': typeof SitesRouteWithChildren;
   '/sites/$siteName': typeof SitesSiteNameRouteWithChildren;
   '/sites/$siteName/$productId': typeof SitesSiteNameProductIdRoute;
@@ -58,14 +67,21 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
     | '/'
+    | '/search'
     | '/sites'
     | '/sites/$siteName'
     | '/sites/$siteName/$productId';
   fileRoutesByTo: FileRoutesByTo;
-  to: '/' | '/sites' | '/sites/$siteName' | '/sites/$siteName/$productId';
+  to:
+    | '/'
+    | '/search'
+    | '/sites'
+    | '/sites/$siteName'
+    | '/sites/$siteName/$productId';
   id:
     | '__root__'
     | '/'
+    | '/search'
     | '/sites'
     | '/sites/$siteName'
     | '/sites/$siteName/$productId';
@@ -73,6 +89,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute;
+  SearchRoute: typeof SearchRoute;
   SitesRoute: typeof SitesRouteWithChildren;
 }
 
@@ -83,6 +100,13 @@ declare module '@tanstack/react-router' {
       path: '/sites';
       fullPath: '/sites';
       preLoaderRoute: typeof SitesRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    '/search': {
+      id: '/search';
+      path: '/search';
+      fullPath: '/search';
+      preLoaderRoute: typeof SearchRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     '/': {
@@ -133,6 +157,7 @@ const SitesRouteWithChildren = SitesRoute._addFileChildren(SitesRouteChildren);
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  SearchRoute: SearchRoute,
   SitesRoute: SitesRouteWithChildren,
 };
 export const routeTree = rootRouteImport

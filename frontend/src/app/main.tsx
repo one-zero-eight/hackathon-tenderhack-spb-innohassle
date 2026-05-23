@@ -41,15 +41,14 @@ const queryClient = new QueryClient({
 })
 
 const rootElement = document.getElementById('root')!
-if (!rootElement.innerHTML) {
-  const root = ReactDOM.createRoot(rootElement)
-  root.render(
-    <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <CityProvider>
-          <RouterProvider router={router} />
-        </CityProvider>
-      </QueryClientProvider>
-    </StrictMode>,
-  )
-}
+const root = ReactDOM.createRoot(rootElement)
+
+root.render(
+  <StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <CityProvider>
+        <RouterProvider router={router} />
+      </CityProvider>
+    </QueryClientProvider>
+  </StrictMode>,
+)

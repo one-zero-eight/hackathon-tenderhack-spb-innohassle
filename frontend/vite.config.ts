@@ -31,7 +31,9 @@ export default defineConfig(({ mode }) => {
         },
       },
       watch: {
+        // Docker bind-mounts need polling, but ignore generated output to avoid reload loops.
         usePolling: true,
+        ignored: ['**/routeTree.gen.ts', '**/.tanstack/**', '**/dist/**', '**/node_modules/**'],
       },
       host: true,
     },

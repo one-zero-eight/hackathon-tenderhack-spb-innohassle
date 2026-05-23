@@ -5,8 +5,7 @@ import { useMemo } from 'react'
 import { IoArrowBack, IoOpenOutline } from 'react-icons/io5'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useCity } from '@/hooks/useCity'
-import { findProductInPriceSearchCache, usePriceSearch } from '@/hooks/usePriceSearch'
-import { useQueryClient } from '@tanstack/react-query'
+import { usePriceSearch } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
 import { normalizeProductImageUrl } from '@/lib/normalizeProductImageUrl'
 import { formatPrice, type SiteKind } from '@/lib/searchResults'
@@ -74,20 +73,17 @@ function ProductPage() {
   const { city } = useCity()
   const location = locationParam ?? getCityLocation(city)
   const searchParams = { query: q, location }
-  const queryClient = useQueryClient()
-  const cachedResult = findProductInPriceSearchCache(queryClient, siteName, productId, location)
-  const { data: priceData, isLoading } = usePriceSearch(searchParams, !cachedResult)
+  const { data: priceData, isLoading } = usePriceSearch(searchParams)
   const result = useMemo(() => {
-    if (cachedResult) return cachedResult
     const sites = priceData?.sites ?? []
     const site = sites.find((item) => item.slug === siteName)
     if (!site) return null
     const product = site.products.find((item) => item.id === productId)
     if (!product) return null
     return { site, product }
-  }, [cachedResult, priceData, siteName, productId])
+  }, [priceData, siteName, productId])
 
-  if (!cachedResult && isLoading) {
+  if (isLoading && !result) {
     return (
       <div className="min-h-screen bg-white">
         <header className="border-gray-blue/60 border-b px-4 py-3 sm:px-6">

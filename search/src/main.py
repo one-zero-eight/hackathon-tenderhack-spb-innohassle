@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import random
 import uuid
 import time
@@ -59,24 +60,12 @@ def _format_update(payload: dict) -> str:
     return _ndjson_line(payload)
 
 
-def _load_response_events(path: Path) -> list[dict]:
-    text = path.read_text(encoding="utf-8")
-    events: list[dict] = []
-    decoder = json.JSONDecoder()
-    index = 0
-    while index < len(text):
-        while index < len(text) and text[index].isspace():
-            index += 1
-        if index >= len(text):
-            break
-        event, offset = decoder.raw_decode(text, index)
-        events.append(event)
-        index = offset
-    return events
+def _load_ndjson_events(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def _pick_random_response_file() -> Path:
-    files = sorted(RESPONSES_DIR.glob("*.json"))
+    files = sorted(RESPONSES_DIR.glob("*.ndjson"))
     if not files:
         raise HTTPException(status_code=503, detail="No mock response files in responses/")
     return random.choice(files)
@@ -129,12 +118,12 @@ async def _log_yandex_search_stream(query: str, region: str) -> AsyncIterator[st
             file.write(json.dumps(json.loads(event), ensure_ascii=False, indent=2) + "\n")
 
 
-async def _mock_yandex_search_stream() -> AsyncIterator[str]:
-    path = _pick_random_response_file()
-    print(f"mock: streaming {path.name}", flush=True)
-    for event in _load_response_events(path):   
-        time.sleep(random.uniform(1, 5))
-        yield _format_update(event)
+# async def _mock_yandex_search_stream() -> AsyncIterator[str]:
+#     path = _pick_random_response_file()
+#     print(f"mock: streaming {path.name}", flush=True)
+#     for event in _load_ndjson_events(path):   
+#         await asyncio.sleep(random.uniform(2, 4))
+#         yield _format_update(event)
 
 
 @app.get("/yandex_search")
@@ -149,7 +138,7 @@ async def yandex_search(
     )
 
 
-@app.get("/yandex_search_mock")
+@app.get("/yandex_search")
 async def yandex_search_mock(
     query: str = Query(..., min_length=1),
     region: str = Query("санкт-петербург", min_length=1),

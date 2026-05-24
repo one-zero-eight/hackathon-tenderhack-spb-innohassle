@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -16,8 +16,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY . .
 
-RUN --mount=type=cache,target=/root/.cache/ms-playwright \
-    uv run playwright install --with-deps chromium
+RUN mkdir -p /app/data/cloak-profiles \
+    && uv run python -m cloakbrowser install
 
 WORKDIR /app/src
 

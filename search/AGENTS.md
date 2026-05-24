@@ -1,234 +1,287 @@
-# Search API — streaming guide for AI agents
+# Search stream API — frontend guide
 
-The search service exposes two **NDJSON stream** endpoints. Each line is one JSON object. Read the response line-by-line until you see `"type": "done"`.
+How to consume the search service NDJSON stream from the frontend.
 
-Default base URL (local): `http://127.0.0.1:9005`
+Each HTTP response line is one JSON object (`Content-Type: application/x-ndjson`). Read line-by-line until `"type": "done"`.
+
+**Base URL:** `import.meta.env.VITE_SEARCH_API_URL ?? '/search-api'` (see `frontend/src/api/search/stream.ts`).
 
 ## Endpoints
 
-| Endpoint | Description |
+| Path | Use |
 |---|---|
-| `GET /yandex_search?query=<text>&region=<text>` | Yandex search only. Products come from SERP snippets. |
-| `GET /yandex_search_extended?query=<text>&region=<text>` | Yandex search **in parallel** with page extraction (HTTP fetch + LLM). Products start as SERP snippets, then get replaced/enriched after page parsing. |
-
-Both return `Content-Type: application/x-ndjson`.
+| `GET /yandex_search?query=<text>&region=<text>` | Live search |
+| `GET /yandex_search_mock?query=<text>&region=<text>` | Dev mock — same params (ignored), same event shape |
 
 | Query param | Default | Meaning |
 |---|---|---|
 | `query` | required | User search text |
-| `region` | `санкт-петербург` | Prepended to the Yandex query (city/region) |
+| `region` | `санкт-петербург` | City/region for Yandex |
 
-## How to consume the stream
+## TypeScript types
 
-**Rule: treat every `page` event as a full snapshot. Replace your entire UI/state with the new data. Do not merge or patch incrementally.**
+```ts
+export type SearchProduct = {
+  title: string
+  href: string
+  price?: string | null
+  thumbnail?: string | null
+  description?: string
+}
 
-```python
-state = None
+export type SearchSite = {
+  hostname: string
+  href?: string | null
+  rating?: string | null
+  reviews?: string | null
+  delivery?: string | null
+  favicon: string
+  products: SearchProduct[]
+}
 
-for line in response.iter_lines():
-    event = json.loads(line)
+export type SearchMetaEvent = {
+  type: 'meta'
+  query: string
+  region: string
+  rewritten_query: string
+}
 
-    if event["type"] == "meta":
-        # optional: store query metadata
-        pass
+export type SearchDataEvent = {
+  type: 'data'
+  data: SearchSite[]
+}
 
-    elif event["type"] == "page":
-        state = event["results"]  # <-- replace, do not append
+export type SearchDoneEvent = {
+  type: 'done'
+}
 
-    elif event["type"] == "done":
-        break
+export type SearchStreamEvent = SearchMetaEvent | SearchDataEvent | SearchDoneEvent
 ```
 
-**The stream may go silent for a long time between events.** No new lines does not mean the request failed — the server may still be working. Keep the connection open and keep reading until `"type": "done"`.
+## How to consume
 
-There is no `"type": "error"` event. On failure the stream stops at `"done"` with whatever was collected in the last `page` snapshot.
+**Replace the entire site list on every `data` event.** Do not merge or patch incrementally.
+
+```ts
+let sites: SearchSite[] = []
+
+const response = await fetch(
+  `${SEARCH_API_BASE}/yandex_search?` +
+    new URLSearchParams({ query, region }),
+)
+
+const reader = response.body!.getReader()
+const decoder = new TextDecoder()
+let buffer = ''
+
+while (true) {
+  const { done, value } = await reader.read()
+  if (done) break
+
+  buffer += decoder.decode(value, { stream: true })
+
+  while (true) {
+    const newline = buffer.indexOf('\n')
+    if (newline === -1) break
+
+    const line = buffer.slice(0, newline).trim()
+    buffer = buffer.slice(newline + 1)
+    if (!line) continue
+
+    const event = JSON.parse(line) as SearchStreamEvent
+
+    if (event.type === 'meta') {
+      // optional: show query / region in UI
+    } else if (event.type === 'data') {
+      sites = event.data // full replacement
+    } else if (event.type === 'done') {
+      break
+    }
+  }
+}
+```
+
+**Silence between events is normal.** The server may take a long time between lines (shop discovery, favicon fetch, per-site searches). Keep the connection open until `"type": "done"`.
+
+There is no `"type": "error"` event. On failure the stream may end early; keep whatever was in the last `data` snapshot.
 
 ## Event sequence
 
-### Always
-
-1. **`meta`** — once, at the start
-2. **`page`** — zero or more times; each contains the **complete** current result set
-3. **`done`** — once, at the end
-
-### `/yandex_search`
-
 ```
-meta → page → page → … → done
+meta → data → data → … → done
 ```
 
-A new `page` is emitted after each Yandex SERP page is scraped (up to 4 pages: first + 3 pager links).
+| `data` event | What changed |
+|---|---|
+| 1st | Up to 3 shops discovered — metadata filled, `"products": []` |
+| 2nd…Nth | One more shop got product offers after a site-scoped search |
+| last | Shops with zero products after extraction are **removed** |
 
-### `/yandex_search_extended`
+Example progression for `шина мишлейн`:
 
+1. `meta`
+2. `data` — 3 sites, all `"products": []`
+3. `data` — first shop has offers
+4. `data` — second shop has offers
+5. `data` — third shop had no offers and is dropped; 2 sites remain
+6. `done`
+
+### First `data` snapshot (discovery)
+
+```json
+{
+  "type": "data",
+  "data": [
+    {
+      "hostname": "spb.koleso.ru",
+      "href": "https://spb.koleso.ru/catalog/tyres/michelin/",
+      "rating": "4,7",
+      "reviews": "14,2K отзывов",
+      "delivery": "Из магазина",
+      "favicon": "https://spb.koleso.ru/favicon.ico",
+      "products": []
+    },
+    {
+      "hostname": "spb.shinservice.ru",
+      "href": "https://spb.shinservice.ru/catalog/tyres/brand-is-michelin/",
+      "rating": "4,6",
+      "reviews": "12,9K отзывов",
+      "delivery": "Курьер",
+      "favicon": "https://spb.shinservice.ru/media/favicon/favicon-32x32.png",
+      "products": []
+    }
+  ]
+}
 ```
-meta → page → page → page → … → done
+
+### Final `data` snapshot (with products)
+
+```json
+{
+  "type": "data",
+  "data": [
+    {
+      "hostname": "spb.koleso.ru",
+      "href": "https://spb.koleso.ru/catalog/tyres/michelin/",
+      "rating": "4,7",
+      "reviews": "14,2K отзывов",
+      "delivery": "Из магазина",
+      "favicon": "https://spb.koleso.ru/favicon.ico",
+      "products": [
+        {
+          "title": "Летняя шина Michelin Primacy 5 225/55 R18 98V",
+          "href": "https://spb.koleso.ru/catalog/tyres/michelin/primacy-5/.../",
+          "price": "24 440 ₽",
+          "thumbnail": "//avatars.mds.yandex.net/get-goods_pic/10533023/.../square_166",
+          "description": "Michelin Primacy 5 — премиальная летняя шина..."
+        }
+      ]
+    }
+  ]
+}
 ```
-
-`page` events are emitted on **every** state change:
-
-- new Yandex SERP results arrived (`extracted: false` products added)
-- a product finished extraction (`extracted: false` row removed, one or more `extracted: true` rows added)
-
-The stream ends when Yandex search is finished **and** all in-flight extractions are finished.
-
----
-
-## Event schemas
 
 ### `meta`
 
 ```json
 {
   "type": "meta",
-  "query": "айфон 17",
+  "query": "докторский халат",
   "region": "санкт-петербург",
-  "rewritten_query": "санкт-петербург купить онлайн айфон 17 -yandex -ozon ..."
+  "rewritten_query": "санкт-петербург купить онлайн докторский халат -yandex -ozon ..."
 }
 ```
 
-| Field | Meaning |
-|---|---|
-| `query` | Original user query |
-| `region` | Region passed to the API |
-| `rewritten_query` | Query sent to Yandex (region + filters applied) |
-
-No product data yet. Do not render results from this event.
-
----
-
-### `page`
-
-```json
-{
-  "type": "page",
-  "results": [
-    {
-      "hostname": "example.ru",
-      "products": [ /* ... */ ]
-    }
-  ]
-}
-```
-
-| Field | Meaning |
-|---|---|
-| `results` | **Full** list of hostname groups. Replace previous state entirely. |
-
-#### `results[]` shape
-
-```json
-{
-  "hostname": "store.example.ru",
-  "products": [ /* product objects */ ]
-}
-```
-
-- Sorted alphabetically by `hostname`.
-- One Yandex listing with the same `href` appears at most once as `extracted: false`.
-- After extraction, the `extracted: false` row for that `href` is **removed** and replaced by one or more `extracted: true` rows.
-
----
-
-### Product objects
-
-#### Not yet extracted (`extracted: false`)
-
-Yandex SERP snippet. Present in both endpoints; in `/yandex_search` all products look like this.
-
-```json
-{
-  "extracted": false,
-  "title": "Apple iPhone 17 256GB",
-  "hostname": "store.example.ru",
-  "href": "https://store.example.ru/product/123",
-  "rating": "4.8",
-  "reviews": "128",
-  "delivery": "Завтра",
-  "price": "89 990 ₽",
-  "thumbnail": "https://..."
-}
-```
-
-Fields may be `null` if absent on the SERP.
-
-#### Extracted (`extracted: true`)
-
-Present only after `/yandex_search_extended` finishes parsing the product page. One Yandex result can become **multiple** extracted products (e.g. several offers on one page; max 5 per page).
-
-```json
-{
-  "extracted": true,
-  "hostname": "store.example.ru",
-  "href": "https://store.example.ru/product/123",
-  "name": "Apple iPhone 17 256GB",
-  "cost": "89 990 ₽",
-  "description": "…",
-  "characteristics": {
-    "Память": "256 ГБ",
-    "Цвет": "белый"
-  }
-}
-```
-
-If extraction finds nothing, a single stub row is kept with `extracted: true` and the original Yandex fields (`title`, `price`, etc.).
-
----
+No sites or products. Do not render results from this event.
 
 ### `done`
 
 ```json
-{
-  "type": "done"
+{ "type": "done" }
+```
+
+Stream finished. The last `data` snapshot is the final UI state.
+
+## Field reference
+
+### Site
+
+| Field | Type | UI notes |
+|---|---|---|
+| `hostname` | string | Display name / slug source |
+| `href` | string \| null | Link to shop page on Yandex |
+| `rating` | string \| null | Comma decimal, e.g. `"4,8"` — parse with `.replace(',', '.')` |
+| `reviews` | string \| null | Label text, e.g. `"23,9K отзывов"` |
+| `delivery` | string \| null | e.g. `"Курьер"`, `"Из аптеки"` |
+| `favicon` | string | Use as `<img src>` for shop icon |
+| `products` | array | Empty until that shop's offers are fetched |
+
+### Product
+
+| Field | Type | UI notes |
+|---|---|---|
+| `title` | string | Product name |
+| `href` | string | Product page URL |
+| `price` | string \| null | Display as-is, e.g. `"209 ₽"` |
+| `thumbnail` | string \| null | Often protocol-relative (`//…`) — prefix `https:` |
+| `description` | string | Optional snippet; may be omitted |
+
+## UI helpers
+
+**Thumbnail URLs** — normalize before use:
+
+```ts
+function normalizeProductImageUrl(url: string | null | undefined): string | null {
+  if (!url?.trim()) return null
+  if (url.startsWith('//')) return `https:${url}`
+  return url
 }
 ```
 
-Stream finished. Keep the last `page` snapshot as final state.
+See `frontend/src/lib/normalizeProductImageUrl.ts` for Yandex avatar edge cases.
 
----
+**Price parsing** — strip non-digits for sorting/comparison:
 
-## Counts helpers
-
-From a `page.results` snapshot:
-
-```python
-hostnames = len(results)
-products = sum(len(g["products"]) for g in results)
-extracted = sum(1 for g in results for p in g["products"] if p.get("extracted"))
-non_extracted = products - extracted
+```ts
+function parsePriceText(value: string | null | undefined): number | null {
+  if (!value) return null
+  const digits = value.replace(/[^\d]/g, '')
+  return digits ? Number.parseInt(digits, 10) : null
+}
 ```
 
----
+**Rating parsing:**
 
-## Example: httpx
-
-```python
-import httpx, json
-
-with httpx.stream(
-    "GET",
-    "http://127.0.0.1:9005/yandex_search_extended",
-    params={"query": "айфон 17", "region": "санкт-петербург"},
-    timeout=None,
-) as response:
-    response.raise_for_status()
-    for line in response.iter_lines():
-        event = json.loads(line)
-        if event["type"] == "page":
-            results = event["results"]  # full replacement
-        elif event["type"] == "done":
-            break
+```ts
+function parseRatingText(value: string | null | undefined): number | null {
+  if (!value) return null
+  const parsed = Number.parseFloat(value.replace(',', '.').trim())
+  return Number.isFinite(parsed) ? parsed : null
+}
 ```
 
-CLI client: `uv run python client.py "айфон 17" --extended` (from `search/src/`).
+**Counts from a snapshot:**
 
----
+```ts
+const siteCount = event.data.length
+const productCount = event.data.reduce((n, site) => n + site.products.length, 0)
+```
+
+**Loading state** — show loading from first byte until `done`. Optionally show partial results on each `data` event (shops appear first, products fill in per shop).
+
+**Throttling** — rapid `data` events can be batched before `setState` (see `STREAM_UI_THROTTLE_MS` in `frontend/src/hooks/useYandexSearchExtended.ts`).
+
+## Mock endpoint (local dev)
+
+Call `/yandex_search_mock` with any `query` / `region`. Response shape is identical to live `/yandex_search` — use the same parser and UI code.
 
 ## Common mistakes
 
 | Mistake | Correct approach |
 |---|---|
-| Appending new products from each `page` event | Replace entire `results` array |
+| Appending products on each `data` event | Replace entire `data` array |
 | Treating silence as failure | Keep reading until `"type": "done"` |
-| Treating `meta` as having products | Only `page` events carry `results` |
-| Assuming 1 Yandex row → 1 final product | Extended mode may expand one row into several `extracted: true` products |
+| Rendering from `meta` | Only `data` events carry sites/products |
+| Expecting empty shops in the final snapshot | Shops with zero products are removed after extraction |
+| Using `thumbnail` as-is when it starts with `//` | Prefix `https:` |
+| Parsing `rating` with `.` decimal | API uses comma decimal (`"4,8"`) |

@@ -1,7 +1,0 @@
-yandex_search_settings:
-  headless: false
-  humanize: true
-  geoip: true
-  proxy: "qJl9qiKZnJ:TUx3MBeLrU@185.200.188.100:33096"
-  proxies:
-    - "qJl9qiKZnJ:TUx3MBeLrU@185.200.188.100:33096"

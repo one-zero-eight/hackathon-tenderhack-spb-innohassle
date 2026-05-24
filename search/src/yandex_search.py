@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import random
 import re
@@ -9,52 +8,26 @@ import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from urllib.parse import urlparse
-import uuid
 
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
+from playwright.async_api import BrowserContext, Page
 
+from cloak_browser import (
+    CloakSessionConfig,
+    close_cloak_session,
+    new_pool_profile_dir,
+    open_cloak_session,
+)
 from get_favicon import _default_favicon, get_favicon
+from proxy_bridge import bridge_manager
 from query_rewrite import rewrite_query
+from yandex_cookies_loader import apply_yandex_cookies_to_context
 
 YA_RU_URL = "https://ya.ru/"
 COOKIES_PATH = Path(__file__).resolve().parent.parent / "yandex_cookies.json"
 SEARCH_INPUT_SELECTOR = "textarea#text"
 TOP_SITES = 3
-
-USER_AGENTS = [
-    (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
-    ),
-    (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/121.0.0.0 Safari/537.36"
-    ),
-    (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
-    ),
-    (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/121.0.0.0 Safari/537.36"
-    ),
-    (
-        "Mozilla/5.0 (X11; Linux x86_64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
-    ),
-    (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-        "Version/17.2 Safari/605.1.15"
-    ),
-]
 
 load_dotenv()
 
@@ -64,23 +37,13 @@ CAPTCHA_WAIT_TIMEOUT_MS = int(os.getenv("CAPTCHA_WAIT_TIMEOUT_MS", "1800000"))
 HEADLESS_CAPTCHA_WAIT_MS = int(os.getenv("HEADLESS_CAPTCHA_WAIT_MS", "120000"))
 SEARCH_RESULTS_SELECTOR = "ul#search-result li.serp-item"
 
-_COOKIE_STRIP_KEYS = (
-    "expirationDate",
-    "sameSite",
-    "partitionKey",
-    "storeId",
-    "hostOnly",
-    "firstPartyDomain",
-    "session",
-)
-
 next_request_time: float = 0.0
 _session: YandexBrowserSession | None = None
 
 scroll_speed_factor = 0.5
 type_speed_factor = 0.3
 
-REQUEST_SLEEP_SECONDS = (7.0, 14.0)
+REQUEST_SLEEP_SECONDS = (10, 20)
 SCROLL_TARGET_DEPTH_FRACTION = (0.55 * scroll_speed_factor, 0.95 * scroll_speed_factor)
 SCROLL_BACK_UP_CHANCE = 0.12 * scroll_speed_factor
 SCROLL_BACK_UP_VIEWPORT_FRACTION = (0.05 * scroll_speed_factor, 0.2 * scroll_speed_factor)
@@ -93,38 +56,6 @@ TYPE_SPACE_PAUSE_SECONDS = (0.05 * type_speed_factor, 0.25 * type_speed_factor)
 TYPE_CHUNK_DELAY_MS = (int(60 * type_speed_factor), int(180 * type_speed_factor))
 TYPE_CHUNK_PAUSE_SECONDS = (0.15 * type_speed_factor, 0.55 * type_speed_factor)
 TYPE_FINISH_PAUSE_SECONDS = (1 * type_speed_factor, 2 * type_speed_factor)
-
-def load_yandex_cookies(path: Path = COOKIES_PATH) -> list[dict]:
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Yandex cookies file not found: {path}. "
-            "Copy yandex_cookies.example.json to yandex_cookies.json and fill in your cookies."
-        )
-
-    with path.open(encoding="utf-8") as file:
-        cookies = json.load(file)
-
-    for cookie in cookies:
-        for key in _COOKIE_STRIP_KEYS:
-            cookie.pop(key, None)
-
-    return cookies
-
-
-def _pick_user_agent() -> str:
-    return random.choice(USER_AGENTS)
-
-
-def _parse_proxy(proxy_url: str) -> dict[str, str]:
-    parsed = urlparse(proxy_url)
-    config: dict[str, str] = {
-        "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
-    }
-    if parsed.username:
-        config["username"] = parsed.username
-    if parsed.password:
-        config["password"] = parsed.password
-    return config
 
 
 class YandexCaptchaError(RuntimeError):
@@ -159,12 +90,10 @@ class YandexBrowserSession:
     ) -> None:
         self._cookies_path = cookies_path
         self._proxy_url = proxy
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._home_page: Page | None = None
-        self._proxy: dict[str, str] | None = None
-        self._user_agent: str | None = None
+        self._bridge_upstream: str | None = None
+        self._profile_dir: Path | None = None
 
     async def start(self) -> None:
         if self._context is not None:
@@ -173,43 +102,38 @@ class YandexBrowserSession:
         if not self._proxy_url:
             raise ValueError("PROXY environment variable is not set")
 
-        self._proxy = _parse_proxy(self._proxy_url)
-        self._user_agent = _pick_user_agent()
-        cookies = load_yandex_cookies(self._cookies_path)
-
-        print(f"browser session: proxy={self._proxy['server']} user_agent={self._user_agent!r}")
-
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
+        self._profile_dir = new_pool_profile_dir("yandex")
+        config = CloakSessionConfig(
             headless=PLAYWRIGHT_HEADLESS,
-            proxy=self._proxy,
-            args=["--disable-blink-features=AutomationControlled"],
+            proxy=self._proxy_url,
+            geoip=True,
+            humanize=False,
+            user_data_dir=self._profile_dir,
         )
-        self._context = await self._browser.new_context(
-            locale="ru-RU",
-            user_agent=self._user_agent,
-            viewport={"width": 1440, "height": 900},
+        print(f"browser session: CloakBrowser profile={self._profile_dir.name}")
+
+        self._context, self._home_page, self._bridge_upstream = await open_cloak_session(config)
+        cookie_count, session_ok = await apply_yandex_cookies_to_context(
+            self._context,
+            self._home_page,
+            self._cookies_path,
         )
-        await self._context.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+        print(
+            f"browser session: loaded {cookie_count} cookies from {self._cookies_path.name} "
+            f"(session_ok={session_ok})",
+            flush=True,
         )
-        await self._context.add_cookies(cookies)
-        self._home_page = await self._context.new_page()
-        await self._home_page.goto(YA_RU_URL, wait_until="domcontentloaded", timeout=30_000)
 
     async def stop(self) -> None:
         self._home_page = None
-        self._proxy = None
-        self._user_agent = None
+        self._profile_dir = None
         if self._context is not None:
-            await self._context.close()
+            await close_cloak_session(
+                self._context,
+                bridge_upstream=self._bridge_upstream,
+            )
             self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
+            self._bridge_upstream = None
 
     async def new_tab(self) -> Page:
         if self._context is None:
@@ -262,6 +186,7 @@ async def close_browser_session() -> None:
     if _session is not None:
         await _session.stop()
         _session = None
+    await bridge_manager.shutdown_all()
 
 
 def get_browser_session() -> YandexBrowserSession:

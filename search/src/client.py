@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import textwrap
+import time
 
 import httpx
 
@@ -157,21 +158,52 @@ def _print_event(event: dict) -> None:
     print(f"unknown event: {json.dumps(event, ensure_ascii=False)}")
 
 
+def _format_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.2f}s"
+    minutes, secs = divmod(seconds, 60)
+    return f"{int(minutes)}m {secs:.2f}s"
+
+
+def _print_timing(event_times: list[tuple[str, float, float]], total_seconds: float) -> None:
+    print(SECTION)
+    print("  TIMING")
+    print(SECTION)
+    for index, (event_type, delta, elapsed) in enumerate(event_times, start=1):
+        print(
+            f"  {index}. {event_type:<6} "
+            f"+{_format_elapsed(delta):>10}  "
+            f"({_format_elapsed(elapsed)} total)"
+        )
+    print(f"\n  total {_format_elapsed(total_seconds)}")
+    print()
+
+
 def main() -> None:
     args = _parse_args()
     url = f"{args.base_url.rstrip('/')}/yandex_search"
     params = {"query": args.query, "region": args.region}
+
+    event_times: list[tuple[str, float, float]] = []
+    started_at = time.perf_counter()
+    last_event_at = started_at
 
     with httpx.stream("GET", url, params=params, timeout=None) as response:
         response.raise_for_status()
         for line in response.iter_lines():
             if not line:
                 continue
+            now = time.perf_counter()
             event = json.loads(line)
+            event_type = str(event.get("type", "?"))
+            event_times.append((event_type, now - last_event_at, now - started_at))
+            last_event_at = now
             _print_event(event)
 
-            if event.get("type") == "done":
+            if event_type == "done":
                 break
+
+    _print_timing(event_times, time.perf_counter() - started_at)
 
 
 if __name__ == "__main__":

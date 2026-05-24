@@ -149,14 +149,7 @@ function acquirePriceSearchStream(params: PriceSearchParams, queryClient: QueryC
   }
 }
 
-export function priceSearchQueryKey({
-  query,
-  location,
-  limit = PRICE_SEARCH_LIMIT,
-  skip = 0,
-  bypassSpellchecker = false,
-  bypassRelevanceFilter = true,
-}: PriceSearchParams) {
+export function priceSearchQueryKey({ query, location, limit = PRICE_SEARCH_LIMIT, skip = 0, bypassSpellchecker = false, bypassRelevanceFilter = true }: PriceSearchParams) {
   return ['price-search', query.trim(), location ?? '', limit, skip, bypassSpellchecker, bypassRelevanceFilter] as const
 }
 

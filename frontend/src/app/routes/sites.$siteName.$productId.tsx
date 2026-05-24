@@ -72,7 +72,7 @@ function ProductPage() {
   const { q = '', location: locationParam } = Route.useSearch()
   const { city } = useCity()
   const location = locationParam ?? getCityLocation(city)
-  const searchParams = { query: q, location }
+  const searchParams = { query: q, location, bypassRelevanceFilter: false }
   const { data: priceData, isLoading } = usePriceSearch(searchParams)
   const result = useMemo(() => {
     const sites = priceData?.sites ?? []

@@ -45,6 +45,7 @@ function SitesAnalyticsPage() {
     query: q,
     location,
     bypassSpellchecker: strict,
+    bypassRelevanceFilter: false,
   })
   const { sites: otherSites, loading: otherLoading } = useYandexSearch(q, location, trimmed.length > 0)
 

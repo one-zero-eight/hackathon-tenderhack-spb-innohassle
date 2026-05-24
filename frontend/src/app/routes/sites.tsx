@@ -54,7 +54,7 @@ function SitesPage() {
   const [correctionHidden, setCorrectionHidden] = useState(false)
 
   const hasQuery = q.trim().length > 0
-  const { data: priceData, isLoading, isError, error } = usePriceSearch({ query: q, location, bypassSpellchecker: strict })
+  const { data: priceData, isLoading, isError, error } = usePriceSearch({ query: q, location, bypassSpellchecker: strict, bypassRelevanceFilter: false })
   const sites = priceData?.sites ?? []
   const effectiveQuery = priceData?.effectiveQuery ?? q.trim()
   const correction = priceData ? getQueryCorrection(q, priceData.fixedQuery, strict) : null

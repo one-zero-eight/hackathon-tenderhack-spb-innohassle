@@ -146,7 +146,7 @@ function CategoryPage() {
 
   const location = locationParam !== undefined ? locationParam : cityLocation
   const queryClient = useQueryClient()
-  const { data: priceData, isLoading } = usePriceSearch({ query: q, location })
+  const { data: priceData, isLoading } = usePriceSearch({ query: q, location, bypassRelevanceFilter: false })
   const site = priceData?.sites.find((item) => item.slug === siteName) ?? findSiteInYandexSearchCache(queryClient, siteName, q, location)
   const isExternal = site?.kind === 'other'
 

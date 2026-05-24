@@ -41,6 +41,9 @@ services:
             - "127.0.0.1:11434:11434"
         volumes:
             - ollama:/root/.ollama
+        environment:
+            - OLLAMA_NUM_PARALLEL=2
+            - OLLAMA_KEEP_ALIVE=-1
 
 volumes:
     caddy_data:
@@ -56,7 +59,7 @@ configs:
                 db_url: "postgresql+asyncpg://postgres:postgres@postgres:5432/postgres"
                 secret_key: ${SECRET_KEY:-meow}
                 token_expiration_in_minutes: 60
-            
+
             ollama_settings:
                 host: "http://ollama:11434"
                 model: "granite4.1:8b"

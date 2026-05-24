@@ -1,20 +1,26 @@
 """
 LLM-based relevance filter for marketplace search results.
 
-Two quality modes:
+Three quality modes:
 
 * ``"high"`` (default) — chain-of-thought: each product gets a short *reason*
   before the boolean verdict.  More accurate, slightly slower due to extra tokens.
-* ``"low"`` — flat boolean list only.  Faster, fewer output tokens.
+* ``"medium"`` — uses the detailed high-quality prompt but returns a flat boolean
+  list.  Accurate like *high*, but faster due to fewer output tokens.
+* ``"low"`` — flat boolean list with a simpler prompt.  Fastest, fewest output tokens.
 
-Both modes run all batches **concurrently** (asyncio.gather + semaphore).
+All modes run all batches **concurrently** (asyncio.gather + semaphore).
 Prompts are in English — compact models handle English more reliably than Russian.
+
+A heuristic pre-filter rejects obvious mismatches (accessories, wrong brand)
+*before* any LLM call, reducing the number of products the model must evaluate.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Annotated, Literal
 
 from ollama import AsyncClient
@@ -72,6 +78,60 @@ Rules:
 """
 
 # ---------------------------------------------------------------------------
+# Heuristic pre-filter
+# ---------------------------------------------------------------------------
+
+# Accessory keywords in Russian and English (lowercase)
+_ACCESSORY_PATTERNS: set[str] = {
+    # Russian
+    "чехол", "чехлы", "бампер", "кейс",
+    "пленка", "плёнка", "пленки", "плёнки",
+    "защитное стекло", "защитная пленка", "защитная плёнка",
+    "кабель", "провод", "зарядка", "зарядное",
+    "подставка", "держатель", "крепление",
+    "наклейка", "стикер",
+    "ремешок", "браслет",
+    # English
+    "case", "cover", "bumper",
+    "film", "screen protector", "tempered glass",
+    "cable", "charger", "charging",
+    "stand", "holder", "mount", "bracket",
+    "keycap", "keycaps", "wrist rest",
+    "sticker", "decal", "skin",
+    "strap", "band",
+}
+
+# Precompiled regex: match any accessory keyword as a whole word
+_ACCESSORY_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(p) for p in _ACCESSORY_PATTERNS) + r")\b",
+    re.IGNORECASE,
+)
+
+# Common "for model X" patterns that indicate an accessory
+_FOR_MODEL_RE = re.compile(
+    r"\b(?:для|for|compatible with|совместим|на)\b",
+    re.IGNORECASE,
+)
+
+
+def _quick_reject(query: str, product: dict) -> bool | None:
+    """Heuristic pre-filter. Returns False if obviously irrelevant, None if unsure.
+
+    This catches accessories and obvious brand mismatches *before* the LLM,
+    reducing the number of products the model must evaluate.
+    """
+    name = (product.get("name") or "").lower()
+    if not name:
+        return None  # no info to judge, let LLM decide
+
+    # 1. Accessory detection: keyword + "for X" pattern
+    if _ACCESSORY_RE.search(name) and _FOR_MODEL_RE.search(name):
+        return False
+
+    return None  # needs LLM
+
+
+# ---------------------------------------------------------------------------
 # Pydantic schemas
 # ---------------------------------------------------------------------------
 
@@ -116,10 +176,13 @@ async def filter_relevant(
     query: str,
     products: list[dict],
     *,
-    quality: Literal["high", "low"] = "high",
+    quality: Literal["high", "medium", "low"] = "high",
 ) -> list[dict]:
     """
     Filter *products* to those relevant to *query* using a local Ollama model.
+
+    A fast heuristic pre-filter rejects obvious mismatches (accessories, etc.)
+    before batching the remainder for LLM scoring.
 
     Batches are scored **concurrently** (up to ``ollama_settings.concurrency``
     parallel requests) so total latency ≈ slowest single batch, not the sum.
@@ -129,8 +192,9 @@ async def filter_relevant(
     Args:
         query:    The user's original search query.
         products: Raw product dicts (must have at least a ``name`` key).
-        quality:  ``"high"`` — chain-of-thought, more accurate, slightly more tokens.
-                  ``"low"``  — flat boolean list, faster, fewer output tokens.
+        quality:  ``"high"``   — chain-of-thought, most accurate, most tokens.
+                  ``"medium"`` — detailed prompt, flat boolean output, fast + accurate.
+                  ``"low"``    — simple prompt, flat boolean output, fastest.
 
     Returns:
         Subset of *products* that the model judged relevant.
@@ -138,14 +202,49 @@ async def filter_relevant(
     if not products:
         return products
 
+    # ---- Phase 1: heuristic pre-filter ----
+    needs_llm: list[tuple[int, dict]] = []  # (original_index, product)
+    kept: list[dict] = []
+    heuristic_rejected = 0
+
+    for idx, product in enumerate(products):
+        verdict = _quick_reject(query, product)
+        if verdict is False:
+            heuristic_rejected += 1
+            logger.debug(
+                "Heuristic rejected [%d]: %s",
+                idx + 1,
+                _product_label(product),
+            )
+        else:
+            needs_llm.append((idx, product))
+
+    if heuristic_rejected:
+        logger.info(
+            "Heuristic pre-filter: %d/%d products rejected for query %r",
+            heuristic_rejected,
+            len(products),
+            query,
+        )
+
+    # ---- Phase 2: LLM scoring on remaining products ----
+    if not needs_llm:
+        return kept  # all rejected by heuristic
+
+    llm_products = [p for _, p in needs_llm]
+
     batch_size = ollama_settings.batch_size
     batches = [
-        products[offset : offset + batch_size]
-        for offset in range(0, len(products), batch_size)
+        llm_products[offset : offset + batch_size]
+        for offset in range(0, len(llm_products), batch_size)
     ]
 
     semaphore = asyncio.Semaphore(ollama_settings.concurrency)
-    score_fn = _score_batch_high if quality == "high" else _score_batch_low
+    score_fn = {
+        "high": _score_batch_high,
+        "medium": _score_batch_medium,
+        "low": _score_batch_low,
+    }[quality]
 
     async def _score_with_sem(batch: list[dict]) -> list[bool]:
         async with semaphore:
@@ -155,18 +254,20 @@ async def filter_relevant(
         *(_score_with_sem(b) for b in batches)
     )
 
-    kept: list[dict] = []
     for batch, flags in zip(batches, batch_flags):
         for product, relevant in zip(batch, flags):
             if relevant:
                 kept.append(product)
 
     logger.info(
-        "Relevance filter [%s]: %d/%d products kept for query %r",
+        "Relevance filter [%s]: %d/%d products kept for query %r"
+        " (heuristic_rejected=%d, llm_evaluated=%d)",
         quality,
         len(kept),
         len(products),
         query,
+        heuristic_rejected,
+        len(llm_products),
     )
     return kept
 
@@ -187,6 +288,15 @@ def _build_user_message(query: str, batch: list[dict]) -> str:
     )
 
 
+def _llm_options() -> dict:
+    """Build the Ollama options dict with context/generation caps."""
+    return {
+        "temperature": 0,
+        "num_ctx": ollama_settings.num_ctx,
+        "num_predict": ollama_settings.num_predict,
+    }
+
+
 async def _score_batch_high(query: str, batch: list[dict]) -> list[bool]:
     """High-quality scoring: chain-of-thought reason + boolean per item."""
     try:
@@ -198,7 +308,7 @@ async def _score_batch_high(query: str, batch: list[dict]) -> list[bool]:
                 {"role": "user", "content": _build_user_message(query, batch)},
             ],
             format=RelevanceBatchHigh.model_json_schema(),
-            options={"temperature": 0},
+            options=_llm_options(),
         )
         result = RelevanceBatchHigh.model_validate_json(response.message.content)
     except Exception as exc:
@@ -222,6 +332,32 @@ async def _score_batch_high(query: str, batch: list[dict]) -> list[bool]:
     return _reconcile([item.relevant for item in result.results], expected=len(batch))
 
 
+async def _score_batch_medium(query: str, batch: list[dict]) -> list[bool]:
+    """Medium-quality scoring: detailed prompt for accuracy, flat boolean output for speed."""
+    try:
+        client = AsyncClient(host=ollama_settings.host, timeout=ollama_settings.timeout)
+        response = await client.chat(
+            model=ollama_settings.model,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT_HIGH},
+                {"role": "user", "content": _build_user_message(query, batch)},
+            ],
+            format=RelevanceBatchLow.model_json_schema(),
+            options=_llm_options(),
+        )
+        result = RelevanceBatchLow.model_validate_json(response.message.content)
+    except Exception as exc:
+        logger.warning(
+            "Ollama [medium] failed for batch of %d (query=%r): %s — passing through",
+            len(batch),
+            query,
+            exc,
+        )
+        return [True] * len(batch)
+
+    return _reconcile(result.results, expected=len(batch))
+
+
 async def _score_batch_low(query: str, batch: list[dict]) -> list[bool]:
     """Fast scoring: flat boolean list, no reasoning overhead."""
     try:
@@ -233,7 +369,7 @@ async def _score_batch_low(query: str, batch: list[dict]) -> list[bool]:
                 {"role": "user", "content": _build_user_message(query, batch)},
             ],
             format=RelevanceBatchLow.model_json_schema(),
-            options={"temperature": 0},
+            options=_llm_options(),
         )
         result = RelevanceBatchLow.model_validate_json(response.message.content)
     except Exception as exc:

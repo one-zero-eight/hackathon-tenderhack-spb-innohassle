@@ -37,7 +37,8 @@ services:
     ports:
       - "11434:11434"
     environment:
-      - OLLAMA_NUM_PARALLEL=4
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_KEEP_ALIVE=-1
     volumes:
       - ollama:/root/.ollama
 

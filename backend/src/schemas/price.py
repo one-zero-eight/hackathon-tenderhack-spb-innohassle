@@ -11,12 +11,13 @@ class PriceSearchRequest(BaseSchema):
     skip: int = Field(default=0, ge=0)
     bypass_spellchecker: bool = False
     bypass_relevance_filter: bool = False
-    relevance_quality: Literal["high", "low"] = Field(
+    relevance_quality: Literal["high", "medium", "low"] = Field(
         default="high",
         description=(
             "Controls the relevance filter accuracy/speed trade-off. "
-            "\"high\" (default) uses chain-of-thought reasoning per product — more accurate. "
-            "\"low\" returns a flat boolean list — faster, fewer output tokens."
+            "\"high\" (default) uses chain-of-thought reasoning per product — most accurate. "
+            "\"medium\" uses the detailed prompt but flat boolean output — accurate and fast. "
+            "\"low\" returns a flat boolean list with a simpler prompt — fastest, fewer output tokens."
         ),
     )
     location: str | None = Field(

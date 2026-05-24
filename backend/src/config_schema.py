@@ -114,12 +114,16 @@ class OllamaSettings(BaseModel):
     "Base URL of the local Ollama server"
     model: str = Field(default="granite4.1:8b")
     "Model to use for relevance filtering"
-    batch_size: int = Field(default=5, ge=1, le=20)
+    batch_size: int = Field(default=10, ge=1, le=20)
     "Products sent in a single LLM call. Keep small for compact models."
     concurrency: int = Field(default=4, ge=1, le=32)
     "Max number of simultaneous batch requests sent to Ollama."
     timeout: int = Field(default=60)
     "Seconds before an Ollama request is considered timed out"
+    num_ctx: int = Field(default=2048, ge=256, le=131072)
+    "Context window size in tokens. Lower values save VRAM and speed up attention."
+    num_predict: int = Field(default=512, ge=64, le=8192)
+    "Max output tokens per request. Caps generation length to avoid runaway output."
 
 
 class WildberriesSettings(BaseModel):

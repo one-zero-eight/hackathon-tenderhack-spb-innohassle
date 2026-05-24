@@ -165,20 +165,44 @@ def _maybe_append_tile(tile: dict[str, Any], out: list[dict[str, Any]], seen: se
     )
 
 
+def _image_url_from_value(value: object) -> str | None:
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text.startswith("data:"):
+            return None
+        if text.startswith("//"):
+            return f"https:{text}"
+        if text.startswith("http"):
+            return text
+        return None
+    if isinstance(value, dict):
+        for key in ("link", "url", "src", "image", "imageUrl"):
+            found = _image_url_from_value(value.get(key))
+            if found:
+                return found
+    if isinstance(value, list):
+        for item in value:
+            found = _image_url_from_value(item)
+            if found:
+                return found
+    return None
+
+
 def _pick_tile_image(tile: dict[str, Any]) -> str | None:
     tile_image = tile.get("tileImage")
-    if isinstance(tile_image, dict):
-        for key in ("image", "link", "url"):
-            value = tile_image.get(key)
-            if isinstance(value, str) and value.startswith("http"):
-                return value
-        items = tile_image.get("items")
-        if isinstance(items, list):
-            for item in items:
-                if isinstance(item, dict):
-                    src = item.get("link") or item.get("url") or item.get("image")
-                    if isinstance(src, str) and src.startswith("http"):
-                        return src
+    if not isinstance(tile_image, dict):
+        return None
+    for key in ("image", "link", "url"):
+        found = _image_url_from_value(tile_image.get(key))
+        if found:
+            return found
+    items = tile_image.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                found = _image_url_from_value(item.get("image")) or _image_url_from_value(item)
+                if found:
+                    return found
     return None
 
 
@@ -270,7 +294,7 @@ def _maybe_append_product(obj: dict[str, Any], out: list[dict[str, Any]], seen: 
             "title": title or "Без названия",
             "price": price,
             "originalPrice": _pick_original_price_text(obj),
-            "image": _pick_image(obj),
+            "image": _pick_image(obj) or _pick_tile_image(obj),
         }
     )
 
@@ -374,17 +398,14 @@ def _pick_original_price_text(obj: dict[str, Any]) -> str | None:
 
 def _pick_image(obj: dict[str, Any]) -> str | None:
     for key in ("image", "imageUrl", "preview", "picture"):
-        value = obj.get(key)
-        if isinstance(value, str) and value.startswith("http"):
-            return value
+        found = _image_url_from_value(obj.get(key))
+        if found:
+            return found
     if isinstance(obj.get("images"), list):
         for image in obj["images"]:
-            if isinstance(image, str) and image.startswith("http"):
-                return image
-            if isinstance(image, dict):
-                src = image.get("link") or image.get("url")
-                if isinstance(src, str) and src.startswith("http"):
-                    return src
+            found = _image_url_from_value(image)
+            if found:
+                return found
     return None
 
 

@@ -5,8 +5,10 @@ import { ResultsSkeleton } from '@/components/shared/ResultsSkeleton'
 import ExportCsvButton from '@/components/export/ExportCsvButton'
 import Button from '@/components/ui/Button'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { useCity } from '@/hooks/useCity'
 import { useYandexSearch } from '@/hooks/useYandexSearch'
 import { usePriceSearch } from '@/hooks/usePriceSearch'
+import { getCityLocation } from '@/lib/geo'
 import { splitSiteResults } from '@/lib/mapSearchResults'
 import { formatPrice } from '@/lib/searchResults'
 import { buildSearchAnalytics, hasAnalyticsData, KIND_COLORS, type AnalyticsProductRow } from '@/lib/searchAnalytics'
@@ -30,7 +32,10 @@ export const Route = createFileRoute('/sites/analytics')({
 })
 
 function SitesAnalyticsPage() {
-  const { q = '', strict = false, location } = Route.useSearch()
+  const { q = '', strict = false, location: locationParam } = Route.useSearch()
+  const { city } = useCity()
+  const cityLocation = getCityLocation(city)
+  const location = locationParam !== undefined ? locationParam : cityLocation
   const trimmed = q.trim()
   const {
     data: priceData,
@@ -41,7 +46,7 @@ function SitesAnalyticsPage() {
     location,
     bypassSpellchecker: strict,
   })
-  const { sites: otherSites, loading: otherLoading } = useYandexSearch(q, location ?? '', trimmed.length > 0)
+  const { sites: otherSites, loading: otherLoading } = useYandexSearch(q, location, trimmed.length > 0)
 
   const marketplaceSites = useMemo(() => splitSiteResults(priceData?.sites ?? []).main, [priceData?.sites])
   const allSites = useMemo(() => [...marketplaceSites, ...otherSites], [marketplaceSites, otherSites])
@@ -52,7 +57,7 @@ function SitesAnalyticsPage() {
   const hasAnyAnalytics = hasAnalyticsData(allSites)
   const showInitialLoading = trimmed.length > 0 && priceLoading && !hasMarketplaceAnalytics
   const showFatalError = priceError && !hasMarketplaceAnalytics && !priceLoading
-  const locationParam = location ?? ''
+  const locationForLinks = location ?? ''
 
   if (!trimmed) {
     return (
@@ -82,7 +87,7 @@ function SitesAnalyticsPage() {
             <p className="text-gray text-sm font-medium tracking-wide uppercase">Аналитика цен</p>
             <h1 className="text-main-blue mt-1 text-3xl font-bold tracking-tight sm:text-4xl">{effectiveQuery}</h1>
           </div>
-          {(showInitialLoading || (otherLoading && hasMarketplaceAnalytics)) && (
+          {(showInitialLoading || (otherLoading && otherSites.length === 0 && hasMarketplaceAnalytics)) && (
             <div className="text-gray flex items-center gap-2 text-sm">
               <LoadingSpinner size="sm" />
               {showInitialLoading ? 'Загружаем маркетплейсы…' : 'Догружаем другие источники…'}
@@ -149,8 +154,8 @@ function SitesAnalyticsPage() {
           </div>
 
           <div className="flex flex-col gap-6">
-            <AnalyticsTopProducts title="Минимальные цены" subtitle="Самые дешёвые предложения в выдаче" items={analytics.topCheapest} query={effectiveQuery} location={locationParam} />
-            <AnalyticsTopProducts title="Максимальные цены" subtitle="Самые дорогие предложения в выдаче" items={analytics.topExpensive} query={effectiveQuery} location={locationParam} />
+            <AnalyticsTopProducts title="Минимальные цены" subtitle="Самые дешёвые предложения в выдаче" items={analytics.topCheapest} query={effectiveQuery} location={locationForLinks} />
+            <AnalyticsTopProducts title="Максимальные цены" subtitle="Самые дорогие предложения в выдаче" items={analytics.topExpensive} query={effectiveQuery} location={locationForLinks} />
           </div>
 
           {analytics.ratedSites.length > 0 && (

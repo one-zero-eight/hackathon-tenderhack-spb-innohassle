@@ -5,7 +5,7 @@ import type { SiteResult } from '@/lib/searchResults'
 import { useQuery, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
-export const PRICE_SEARCH_LIMIT = 100
+export const PRICE_SEARCH_LIMIT = 50
 export const PRICE_SEARCH_STALE_MS = 5 * 60 * 1000
 const STREAM_UI_THROTTLE_MS = 250
 const COMPLETED_STREAMS_MAX = 32

@@ -2,7 +2,42 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+_BRAND_NAME_PREFIX = re.compile(r"^/?\s*([^/]+?)\s*/\s*(.+)$", re.DOTALL)
+
+
+def split_brand_from_name(
+    name: str | None,
+    brand: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Extract leading ``Brand / …`` from WB product title or brand field."""
+
+    def try_split(text: str | None) -> tuple[str, str] | None:
+        if not text:
+            return None
+        text = text.strip()
+        match = _BRAND_NAME_PREFIX.match(text)
+        if not match:
+            return None
+        parsed_brand = match.group(1).strip()
+        rest = match.group(2).strip()
+        if not parsed_brand or not rest:
+            return None
+        return parsed_brand, rest
+
+    from_name = try_split(name)
+    if from_name:
+        parsed_brand, trimmed_name = from_name
+        return parsed_brand, trimmed_name
+
+    from_brand = try_split(brand)
+    if from_brand:
+        parsed_brand, rest = from_brand
+        return parsed_brand, name or rest
+
+    return brand, name
 
 # Kept for optional JSON-based tooling / search_products.collect_products_from_search_pages.
 
@@ -94,10 +129,15 @@ def api_item_to_product(item: dict[str, Any]) -> dict[str, Any] | None:
     brand = item.get("brand")
     if isinstance(brand, dict):
         brand = brand.get("name")
+    brand = str(brand).strip() if brand else None
+
+    raw_name = item.get("name")
+    name = raw_name.strip() if isinstance(raw_name, str) else None
+    brand, name = split_brand_from_name(name, brand)
 
     return {
-        "name": item.get("name"),
-        "brand": str(brand).strip() if brand else None,
+        "name": name,
+        "brand": brand,
         "sale_price": sale_price,
         "original_price": original_price,
         "url": f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",

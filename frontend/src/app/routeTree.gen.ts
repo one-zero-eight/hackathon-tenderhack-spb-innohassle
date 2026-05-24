@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root';
 import { Route as SitesRouteImport } from './routes/sites';
 import { Route as LandingRouteImport } from './routes/_landing';
 import { Route as LandingIndexRouteImport } from './routes/_landing/index';
+import { Route as SitesAnalyticsRouteImport } from './routes/sites.analytics';
 import { Route as SitesSiteNameRouteImport } from './routes/sites.$siteName';
 import { Route as LandingSearchRouteImport } from './routes/_landing/search';
 import { Route as SitesSiteNameProductIdRouteImport } from './routes/sites.$siteName.$productId';
@@ -29,6 +30,11 @@ const LandingIndexRoute = LandingIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => LandingRoute,
+} as any);
+const SitesAnalyticsRoute = SitesAnalyticsRouteImport.update({
+  id: '/analytics',
+  path: '/analytics',
+  getParentRoute: () => SitesRoute,
 } as any);
 const SitesSiteNameRoute = SitesSiteNameRouteImport.update({
   id: '/$siteName',
@@ -50,6 +56,7 @@ export interface FileRoutesByFullPath {
   '/sites': typeof SitesRouteWithChildren;
   '/search': typeof LandingSearchRoute;
   '/sites/$siteName': typeof SitesSiteNameRouteWithChildren;
+  '/sites/analytics': typeof SitesAnalyticsRoute;
   '/': typeof LandingIndexRoute;
   '/sites/$siteName/$productId': typeof SitesSiteNameProductIdRoute;
 }
@@ -57,6 +64,7 @@ export interface FileRoutesByTo {
   '/sites': typeof SitesRouteWithChildren;
   '/search': typeof LandingSearchRoute;
   '/sites/$siteName': typeof SitesSiteNameRouteWithChildren;
+  '/sites/analytics': typeof SitesAnalyticsRoute;
   '/': typeof LandingIndexRoute;
   '/sites/$siteName/$productId': typeof SitesSiteNameProductIdRoute;
 }
@@ -66,6 +74,7 @@ export interface FileRoutesById {
   '/sites': typeof SitesRouteWithChildren;
   '/_landing/search': typeof LandingSearchRoute;
   '/sites/$siteName': typeof SitesSiteNameRouteWithChildren;
+  '/sites/analytics': typeof SitesAnalyticsRoute;
   '/_landing/': typeof LandingIndexRoute;
   '/sites/$siteName/$productId': typeof SitesSiteNameProductIdRoute;
 }
@@ -75,6 +84,7 @@ export interface FileRouteTypes {
     | '/sites'
     | '/search'
     | '/sites/$siteName'
+    | '/sites/analytics'
     | '/'
     | '/sites/$siteName/$productId';
   fileRoutesByTo: FileRoutesByTo;
@@ -82,6 +92,7 @@ export interface FileRouteTypes {
     | '/sites'
     | '/search'
     | '/sites/$siteName'
+    | '/sites/analytics'
     | '/'
     | '/sites/$siteName/$productId';
   id:
@@ -90,6 +101,7 @@ export interface FileRouteTypes {
     | '/sites'
     | '/_landing/search'
     | '/sites/$siteName'
+    | '/sites/analytics'
     | '/_landing/'
     | '/sites/$siteName/$productId';
   fileRoutesById: FileRoutesById;
@@ -121,6 +133,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/';
       preLoaderRoute: typeof LandingIndexRouteImport;
       parentRoute: typeof LandingRoute;
+    };
+    '/sites/analytics': {
+      id: '/sites/analytics';
+      path: '/analytics';
+      fullPath: '/sites/analytics';
+      preLoaderRoute: typeof SitesAnalyticsRouteImport;
+      parentRoute: typeof SitesRoute;
     };
     '/sites/$siteName': {
       id: '/sites/$siteName';
@@ -173,10 +192,12 @@ const SitesSiteNameRouteWithChildren = SitesSiteNameRoute._addFileChildren(
 
 interface SitesRouteChildren {
   SitesSiteNameRoute: typeof SitesSiteNameRouteWithChildren;
+  SitesAnalyticsRoute: typeof SitesAnalyticsRoute;
 }
 
 const SitesRouteChildren: SitesRouteChildren = {
   SitesSiteNameRoute: SitesSiteNameRouteWithChildren,
+  SitesAnalyticsRoute: SitesAnalyticsRoute,
 };
 
 const SitesRouteWithChildren = SitesRoute._addFileChildren(SitesRouteChildren);

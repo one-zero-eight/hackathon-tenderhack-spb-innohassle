@@ -16,6 +16,7 @@ type ProductCardProps = {
   surface?: 'white' | 'muted'
   bordered?: boolean
   external?: boolean
+  sourceName?: string
 }
 
 type ViewAllCardProps = {
@@ -73,7 +74,7 @@ function ProductImage({ product, className }: { product: Product; className?: st
 
 const imageFrameClass = 'block aspect-3/4 w-full overflow-hidden rounded-xl bg-white'
 
-export function ProductCard({ product, siteSlug, query = '', location, layout = 'carousel', surface = 'white', bordered = false, external = false }: ProductCardProps) {
+export function ProductCard({ product, siteSlug, query = '', location, layout = 'carousel', surface = 'white', bordered = false, external = false, sourceName }: ProductCardProps) {
   const cardBg = surface === 'muted' ? 'bg-pale-blue/35' : 'bg-white'
   const cardBorder = bordered ? 'border border-gray-blue/60' : undefined
   const showPrice = product.price > 0
@@ -105,14 +106,30 @@ export function ProductCard({ product, siteSlug, query = '', location, layout = 
       </ProductLink>
 
       <div className="flex min-w-0 flex-col gap-1 px-0.5 pt-2">
-        {showPrice && (
-          <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="truncate text-base leading-tight font-semibold text-black">
-            {formatPrice(product.price)}
-          </ProductLink>
+        {sourceName ? (
+          <>
+            <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="line-clamp-2 text-sm leading-snug font-medium text-black">
+              {product.name}
+            </ProductLink>
+            <p className="text-gray truncate text-xs">{sourceName}</p>
+            {showPrice && (
+              <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="truncate text-base leading-tight font-semibold text-black">
+                {formatPrice(product.price)}
+              </ProductLink>
+            )}
+          </>
+        ) : (
+          <>
+            {showPrice && (
+              <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="truncate text-base leading-tight font-semibold text-black">
+                {formatPrice(product.price)}
+              </ProductLink>
+            )}
+            <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="line-clamp-2 text-sm leading-snug text-black">
+              {product.name}
+            </ProductLink>
+          </>
         )}
-        <ProductLink product={product} siteSlug={siteSlug} query={query} location={location} external={external} className="line-clamp-2 text-sm leading-snug text-black">
-          {product.name}
-        </ProductLink>
       </div>
     </article>
   )

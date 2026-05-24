@@ -1,5 +1,6 @@
 import { Link, Outlet, createFileRoute, useNavigate, useRouterState } from '@tanstack/react-router'
-import { IoSearch, IoStar, IoArrowBack, IoDownloadOutline } from 'react-icons/io5'
+import { IoSearch, IoStar, IoArrowBack, IoStatsChart } from 'react-icons/io5'
+import ExportCsvButton from '@/components/export/ExportCsvButton'
 import CitySelect from '@/components/shared/CitySelect'
 import SiteTitle from '@/components/shared/SiteTitle'
 import { ProductCard, ViewAllCard } from '@/components/shared/ProductCard'
@@ -14,7 +15,8 @@ import { cn } from '@/lib/cn'
 import { splitSiteResults } from '@/lib/mapSearchResults'
 import { getCityLocation, getPopularCities, NO_CITY_OPTION } from '@/lib/geo'
 import { getQueryCorrection } from '@/lib/queryCorrection'
-import { countExportableProducts, exportSitesToCsv } from '@/lib/exportCsv'
+import { countExportableProducts } from '@/lib/exportCsv'
+import { hasAnalyticsData } from '@/lib/searchAnalytics'
 import { formatPrice, formatSiteRating, type SiteResult } from '@/lib/searchResults'
 import { useVisibleProductCount } from '@/lib/useVisibleProductCount'
 import { memo, useEffect, useState } from 'react'
@@ -88,6 +90,7 @@ function SitesPage() {
   const showEmpty = hasQuery && !isLoading && !otherLoading && !isError && !otherError && !hasMainProducts && !hasOtherProducts
   const allSitesForExport = [...mainSiteResults, ...otherSiteResults]
   const exportableCount = countExportableProducts(allSitesForExport)
+  const showAnalytics = hasAnalyticsData(mainSiteResults) || hasAnalyticsData(otherSiteResults)
 
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault()
@@ -146,11 +149,18 @@ function SitesPage() {
             <p className="text-gray text-sm">Результаты поиска</p>
             {isLoading && !hasMainProducts ? <div className="bg-pale-blue mt-2 h-8 w-56 max-w-full animate-pulse rounded-lg" /> : <h1 className="text-2xl font-semibold text-black">{effectiveQuery || 'Все товары'}</h1>}
           </div>
-          {exportableCount > 0 && (
-            <Button type="button" variant="outline" size="sm" className="inline-flex items-center gap-2 rounded-lg" onClick={() => exportSitesToCsv(allSitesForExport, { query: effectiveQuery })}>
-              <IoDownloadOutline size={18} />
-              Экспорт ({exportableCount})
-            </Button>
+          {(exportableCount > 0 || showAnalytics) && (
+            <div className="flex flex-wrap gap-2">
+              {showAnalytics && (
+                <Link to="/sites/analytics" search={{ q: effectiveQuery, location, strict: strict || undefined }}>
+                  <Button type="button" variant="outline" size="sm" className="inline-flex items-center gap-2 rounded-lg">
+                    <IoStatsChart size={18} />
+                    Аналитика
+                  </Button>
+                </Link>
+              )}
+              <ExportCsvButton sites={allSitesForExport} query={effectiveQuery} iconOnly />
+            </div>
           )}
         </div>
 
@@ -281,8 +291,7 @@ const SiteSection = memo(function SiteSection({
   const prices = pricedProducts.map((product) => product.price)
   const medianProductPrice = medianPrice(prices)
   const averageProductPrice = prices.length > 0 ? Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length) : null
-  const statsLoading =
-    !external && pricesLoading && (productLimit == null ? true : site.products.length < productLimit && !site.sourceComplete)
+  const statsLoading = !external && pricesLoading && (productLimit == null ? true : site.products.length < productLimit && !site.sourceComplete)
   const showPriceStats = external ? pricedProducts.length > 0 : statsLoading || pricedProducts.length > 1
   const showViewAll = !external || site.products.length > 5
 

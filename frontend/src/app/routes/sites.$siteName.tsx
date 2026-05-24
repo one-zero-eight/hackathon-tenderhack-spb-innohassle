@@ -1,4 +1,4 @@
-import { Link, Outlet, createFileRoute, useRouterState } from '@tanstack/react-router'
+import { Link, Outlet, createFileRoute, redirect, useRouterState } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { IoArrowBack, IoGridOutline, IoListOutline, IoSearch, IoDownloadOutline } from 'react-icons/io5'
 import SiteTitle from '@/components/shared/SiteTitle'
@@ -32,6 +32,19 @@ export const Route = createFileRoute('/sites/$siteName')({
     q: typeof search.q === 'string' ? search.q : '',
     location: typeof search.location === 'string' ? search.location : undefined,
   }),
+  beforeLoad: ({ params, search }) => {
+    if (params.siteName === 'analytics') {
+      const parsed = search as Record<string, unknown>
+      throw redirect({
+        to: '/sites/analytics',
+        search: {
+          q: typeof parsed.q === 'string' ? parsed.q : '',
+          location: typeof parsed.location === 'string' ? parsed.location : undefined,
+          strict: parsed.strict === true || parsed.strict === 'true' || parsed.strict === '1' ? true : undefined,
+        },
+      })
+    }
+  },
   component: CategoryPage,
 })
 
@@ -133,7 +146,7 @@ function CategoryPage() {
 
   const location = locationParam !== undefined ? locationParam : cityLocation
   const queryClient = useQueryClient()
-  const { data: priceData, isLoading, isError } = usePriceSearch({ query: q, location })
+  const { data: priceData, isLoading } = usePriceSearch({ query: q, location })
   const site = priceData?.sites.find((item) => item.slug === siteName) ?? findSiteInYandexSearchCache(queryClient, siteName, q, location)
   const isExternal = site?.kind === 'other'
 
@@ -151,7 +164,7 @@ function CategoryPage() {
     )
   }
 
-  if (isError || !site) {
+  if (!site) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-white p-6">
         <h1 className="text-2xl font-semibold">Категория не найдена</h1>

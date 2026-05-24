@@ -28,6 +28,7 @@ from src.api.parsers.wildberries.dom_extract import (
     WB_SCROLL_PAUSE_SEC,
 )
 from src.api.parsers.wildberries.exceptions import WildberriesAccessError
+from src.api.parsers.wildberries.search_api import split_brand_from_name
 
 logger = logging.getLogger(__name__)
 
@@ -253,9 +254,12 @@ class WildberriesParser:
         url = item.get("url")
         if isinstance(url, str) and url.startswith("/"):
             url = f"https://www.wildberries.ru{url}"
+        name = _clean_text(item.get("name"))
+        brand = _clean_text(item.get("brand"))
+        brand, name = split_brand_from_name(name, brand)
         return {
-            "name": item.get("name"),
-            "brand": _clean_text(item.get("brand")),
+            "name": name,
+            "brand": brand,
             "sale_price": sale_price,
             "original_price": parse_rub_price(item.get("originalPriceText")),
             "url": url,

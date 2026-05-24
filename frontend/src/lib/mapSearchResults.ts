@@ -1,4 +1,5 @@
 import type { MarketplacePriceResult, PriceSearchStreamState, ProductPrice } from '@/api/prices'
+import { decodeHtmlEntities } from '@/lib/decodeHtmlEntities'
 import { normalizeProductImageUrl } from '@/lib/normalizeProductImageUrl'
 import { MARKETPLACE_LOGOS, type Product, type SiteKind, type SiteResult } from '@/lib/searchResults'
 
@@ -47,11 +48,15 @@ function productId(slug: string, url: string | null | undefined, index: number):
 }
 
 function mapProduct(item: ProductPrice, slug: string, index: number): Product {
+  const rawName = item.name?.trim()
+  const name = rawName ? decodeHtmlEntities(rawName) : 'Без названия'
+  const brand = item.brand?.trim() ? decodeHtmlEntities(item.brand.trim()) : item.brand
+
   return {
     id: productId(slug, item.url, index),
-    name: item.name?.trim() || 'Без названия',
+    name,
     price: item.price != null ? Math.round(item.price) : 0,
-    brand: item.brand,
+    brand,
     originalPrice: item.original_price != null ? Math.round(item.original_price) : null,
     url: item.url,
     imageUrl: normalizeProductImageUrl(item.image_url),

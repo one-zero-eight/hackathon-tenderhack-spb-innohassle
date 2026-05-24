@@ -1,4 +1,5 @@
 import type { SearchShop } from '@/api/search/events'
+import { decodeHtmlEntities } from '@/lib/decodeHtmlEntities'
 import { normalizeProductImageUrl } from '@/lib/normalizeProductImageUrl'
 import type { Product, SiteResult } from '@/lib/searchResults'
 
@@ -41,7 +42,7 @@ function mapStreamProduct(shop: SearchShop, product: SearchShop['products'][numb
 
   return {
     id: productId(slug, href, index),
-    name: trimmedName,
+    name: decodeHtmlEntities(trimmedName),
     price: parsePriceText(product.price) ?? 0,
     url: href ?? null,
     imageUrl: normalizeProductImageUrl(product.thumbnail),

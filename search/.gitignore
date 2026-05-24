@@ -3,5 +3,6 @@ yandex_cookies.json
 __pycache__
 .venv
 
-response.json
+responses/
 cleaning/
+search_events.ndjson

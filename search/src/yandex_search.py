@@ -4,57 +4,65 @@ import asyncio
 import json
 import os
 import random
-import sys
+import re
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from urllib.parse import urlparse
+import uuid
 
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
-from notify import notify_captcha
+from get_favicon import _default_favicon, get_favicon
 from query_rewrite import rewrite_query
 
 YA_RU_URL = "https://ya.ru/"
 COOKIES_PATH = Path(__file__).resolve().parent.parent / "yandex_cookies.json"
-RESPONSE_JSON_PATH = Path(__file__).resolve().parent.parent / "response.json"
 SEARCH_INPUT_SELECTOR = "textarea#text"
-PAGER_NEXT_SELECTORS = (
-    ".Pager a.Pager-Item_type_next",
-    ".Pager-ListItem_type_next a",
-    ".Pager a[aria-label='Следующая страница']",
-)
-MAX_PAGER_CLICKS = 1
+TOP_SITES = 3
 
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/122.0.0.0 Safari/537.36"
-)
-
-PROXIES = [
-    "http://qJl9qiKZnJ:TUx3MBeLrU@185.200.188.100:41403",
-    "http://yXEwruw6Sk:9zN5auC9x5@103.82.103.157:58020",
-    "http://yf3HaMfY7U:MdGUgUkVKs@103.127.77.179:62868",
-    "http://CryQV1c3lo:pjXmuWtdeh@103.82.103.17:59750",
-    "http://DvYemkIajY:uoSe6oN3RQ@45.158.198.88:40172",
-    "http://YHMI2bDrbg:jwaAI5v6IS@45.132.252.133:53570",
-    "http://m8IY2bBm6i:F1O2ykVyiu@45.154.247.22:63275",
-    "http://NaTLKpP86D:b35iXcQ25L@103.82.103.253:47798",
-    "http://Z7f0lVoTgu:jyMDFnmlqs@45.132.252.17:20890",
-    "http://Jls7tshfC7:yiESYD0iJt@193.168.224.143:51312",
+USER_AGENTS = [
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/121.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/121.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (X11; Linux x86_64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/17.2 Safari/605.1.15"
+    ),
 ]
 
-random.shuffle(PROXIES)
+load_dotenv()
 
+PROXY = os.getenv("PROXY")
 PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() in {"1", "true", "yes"}
-MACBOOK = os.getenv("MACBOOK", "false").lower() in {"1", "true", "yes"}
 CAPTCHA_WAIT_TIMEOUT_MS = int(os.getenv("CAPTCHA_WAIT_TIMEOUT_MS", "1800000"))
 HEADLESS_CAPTCHA_WAIT_MS = int(os.getenv("HEADLESS_CAPTCHA_WAIT_MS", "120000"))
 SEARCH_RESULTS_SELECTOR = "ul#search-result li.serp-item"
-
-_captcha_wait_callback: Callable[[], Awaitable[None]] | None = None
 
 _COOKIE_STRIP_KEYS = (
     "expirationDate",
@@ -66,15 +74,13 @@ _COOKIE_STRIP_KEYS = (
     "session",
 )
 
-_proxy_last_used: dict[str, float] = {}
 next_request_time: float = 0.0
 _session: YandexBrowserSession | None = None
 
-pager_speed_factor = 0.7
 scroll_speed_factor = 0.5
 type_speed_factor = 0.3
 
-PAGER_TIME_SLEEP_SECONDS = (10 * pager_speed_factor, 20 * pager_speed_factor)
+REQUEST_SLEEP_SECONDS = (7.0, 14.0)
 SCROLL_TARGET_DEPTH_FRACTION = (0.55 * scroll_speed_factor, 0.95 * scroll_speed_factor)
 SCROLL_BACK_UP_CHANCE = 0.12 * scroll_speed_factor
 SCROLL_BACK_UP_VIEWPORT_FRACTION = (0.05 * scroll_speed_factor, 0.2 * scroll_speed_factor)
@@ -105,17 +111,8 @@ def load_yandex_cookies(path: Path = COOKIES_PATH) -> list[dict]:
     return cookies
 
 
-def _pick_proxy(proxies: str | Sequence[str]) -> str:
-    if isinstance(proxies, str):
-        _proxy_last_used[proxies] = time.monotonic()
-        return proxies
-
-    if not proxies:
-        raise ValueError("proxies list is empty")
-
-    proxy = min(proxies, key=lambda p: _proxy_last_used.get(p, 0.0))
-    _proxy_last_used[proxy] = time.monotonic()
-    return proxy
+def _pick_user_agent() -> str:
+    return random.choice(USER_AGENTS)
 
 
 def _parse_proxy(proxy_url: str) -> dict[str, str]:
@@ -134,11 +131,6 @@ class YandexCaptchaError(RuntimeError):
     pass
 
 
-def set_captcha_wait_callback(callback: Callable[[], Awaitable[None]] | None) -> None:
-    global _captcha_wait_callback
-    _captcha_wait_callback = callback
-
-
 async def _is_captcha_page(page: Page) -> bool:
     if "checkcaptcha" in page.url:
         return True
@@ -146,9 +138,9 @@ async def _is_captcha_page(page: Page) -> bool:
 
 
 def _captcha_wait_timeout_ms() -> int:
-    if MACBOOK and sys.platform == "darwin" and not PLAYWRIGHT_HEADLESS:
-        return CAPTCHA_WAIT_TIMEOUT_MS
-    return HEADLESS_CAPTCHA_WAIT_MS
+    if PLAYWRIGHT_HEADLESS:
+        return HEADLESS_CAPTCHA_WAIT_MS
+    return CAPTCHA_WAIT_TIMEOUT_MS
 
 
 async def _wait_for_search_results(page: Page, *, captcha_detected: bool) -> None:
@@ -163,31 +155,39 @@ class YandexBrowserSession:
     def __init__(
         self,
         cookies_path: Path = COOKIES_PATH,
-        proxies: Sequence[str] = PROXIES,
+        proxy: str | None = PROXY,
     ) -> None:
         self._cookies_path = cookies_path
-        self._proxies = proxies
+        self._proxy_url = proxy
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._home_page: Page | None = None
+        self._proxy: dict[str, str] | None = None
+        self._user_agent: str | None = None
 
     async def start(self) -> None:
         if self._context is not None:
             return
 
-        proxy = _parse_proxy(_pick_proxy(self._proxies))
+        if not self._proxy_url:
+            raise ValueError("PROXY environment variable is not set")
+
+        self._proxy = _parse_proxy(self._proxy_url)
+        self._user_agent = _pick_user_agent()
         cookies = load_yandex_cookies(self._cookies_path)
+
+        print(f"browser session: proxy={self._proxy['server']} user_agent={self._user_agent!r}")
 
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(
             headless=PLAYWRIGHT_HEADLESS,
-            proxy=proxy,
+            proxy=self._proxy,
             args=["--disable-blink-features=AutomationControlled"],
         )
         self._context = await self._browser.new_context(
             locale="ru-RU",
-            user_agent=USER_AGENT,
+            user_agent=self._user_agent,
             viewport={"width": 1440, "height": 900},
         )
         await self._context.add_init_script(
@@ -199,6 +199,8 @@ class YandexBrowserSession:
 
     async def stop(self) -> None:
         self._home_page = None
+        self._proxy = None
+        self._user_agent = None
         if self._context is not None:
             await self._context.close()
             self._context = None
@@ -217,7 +219,11 @@ class YandexBrowserSession:
     async def _open_search_tab(self) -> Page:
         return await self.new_tab()
 
-    async def search(self, query: str, region: str = "санкт-петербург") -> AsyncGenerator[list[dict], None]:
+    async def search(
+        self,
+        query: str,
+        region: str = "санкт-петербург",
+    ) -> AsyncGenerator[list[dict], None]:
         if self._context is None:
             raise RuntimeError("Browser session is not started")
 
@@ -225,27 +231,28 @@ class YandexBrowserSession:
         page = await self._open_search_tab()
         try:
             await _submit_search(page, rewritten_query)
-            yield _parse_results(await _current_soup(page))
+            sites = _sites_from_discovery(_parse_site_results(await _current_soup(page)))
+            await _attach_favicons(sites)
+            yield sites
 
-            for _ in range(MAX_PAGER_CLICKS):
-                try:
-                    if not await _click_next_page(page):
-                        break
-                except YandexCaptchaError as error:
-                    print(error)
-                    break
-                yield _parse_results(await _current_soup(page))
+            for site in list(sites):
+                site_query = f"site:{site['hostname']} {query.strip()}"
+                await _submit_search(page, site_query)
+                site["products"] = _parse_offer_results(await _current_soup(page))
+                if not site["products"]:
+                    sites.remove(site)
+                yield sites
         finally:
             await page.close()
 
 
 async def init_browser_session(
     cookies_path: Path = COOKIES_PATH,
-    proxies: Sequence[str] = PROXIES,
+    proxy: str | None = PROXY,
 ) -> YandexBrowserSession:
     global _session
     if _session is None:
-        _session = YandexBrowserSession(cookies_path=cookies_path, proxies=proxies)
+        _session = YandexBrowserSession(cookies_path=cookies_path, proxy=proxy)
         await _session.start()
     return _session
 
@@ -272,19 +279,14 @@ async def _respect_rate_limit() -> None:
 
 
 async def _handle_captcha(page: Page) -> bool:
-    captcha_detected = await _is_captcha_page(page)
-    if captcha_detected:
-        notify_captcha()
-        if _captcha_wait_callback is not None:
-            await _captcha_wait_callback()
-    return captcha_detected
+    return await _is_captcha_page(page)
 
 
 async def _wait_for_results(page: Page, *, captcha_detected: bool) -> None:
     await _wait_for_search_results(page, captcha_detected=captcha_detected)
     await _scroll_page_chaotically(page)
     global next_request_time
-    next_request_time = time.monotonic() + random.uniform(*PAGER_TIME_SLEEP_SECONDS)
+    next_request_time = time.monotonic() + random.uniform(*REQUEST_SLEEP_SECONDS)
 
 
 async def _current_soup(page: Page) -> BeautifulSoup:
@@ -393,35 +395,65 @@ async def _submit_search(page: Page, query: str) -> None:
     await _wait_for_results(page, captcha_detected=captcha_detected)
 
 
-async def _find_next_page_link(page: Page):
-    for selector in PAGER_NEXT_SELECTORS:
-        link = page.locator(selector)
-        if await link.count() > 0:
-            return link.first
-    return None
+async def _favicon_for_site(site: dict) -> str:
+    url = site.get("href") or f"https://{site['hostname']}/"
+    try:
+        favicon = await get_favicon(url)
+    except Exception:
+        favicon = None
+    return favicon or _default_favicon(url)
 
 
-async def _click_next_page(page: Page) -> bool:
-    next_link = await _find_next_page_link(page)
-    if next_link is None:
-        return False
-
-    await _respect_rate_limit()
-    await next_link.click()
-
-    captcha_detected = await _handle_captcha(page)
-    await _wait_for_results(page, captcha_detected=captcha_detected)
-    return True
+async def _attach_favicons(sites: list[dict]) -> None:
+    favicons = await asyncio.gather(*(_favicon_for_site(site) for site in sites))
+    for site, favicon in zip(sites, favicons, strict=True):
+        site["favicon"] = favicon
 
 
-def _parse_results(soup: BeautifulSoup) -> list[dict]:
-    results: list[dict] = []
+def _sites_from_discovery(site_results: list[dict], limit: int = TOP_SITES) -> list[dict]:
+    sites: list[dict] = []
+    seen: set[str] = set()
+    for result in site_results:
+        hostname = result.get("hostname")
+        if not hostname or hostname in seen:
+            continue
+        seen.add(hostname)
+        sites.append({
+            "hostname": hostname,
+            "href": result.get("href"),
+            "rating": result.get("rating"),
+            "reviews": result.get("reviews"),
+            "delivery": result.get("delivery"),
+            "products": [],
+        })
+        if len(sites) >= limit:
+            break
+    return sites
+
+
+def _element_text(element) -> str:
+    if element is None:
+        return ""
+    text = element.get_text(separator=" ", strip=True)
+    return re.sub(r"\s+", " ", text)
+
+
+def _iter_serp_items(soup: BeautifulSoup):
     ul = soup.find("ul", id="search-result")
     if not ul:
-        return results
+        return
 
     for li in ul.select("li.serp-item"):
         if li.select("div[class*='AdvLabel']"):
+            continue
+        yield li
+
+
+def _parse_site_results(soup: BeautifulSoup) -> list[dict]:
+    results: list[dict] = []
+
+    for li in _iter_serp_items(soup):
+        if not li.select_one("div.Verified_type_goods"):
             continue
 
         title = li.select_one(".OrganicTitle-LinkText")
@@ -438,160 +470,75 @@ def _parse_results(soup: BeautifulSoup) -> list[dict]:
         delivery_container_el = li.select_one(".ShopInfo-DeliveryBnplContainer .EDeliveryGroup-Item")
         delivery_container = delivery_container_el.get_text(strip=True) if delivery_container_el else None
 
+        if title and hostname:
+            results.append({
+                "title": _element_text(title),
+                "hostname": hostname,
+                "href": href,
+                "rating": rating,
+                "reviews": reviews,
+                "delivery": delivery_container,
+            })
+
+    return results
+
+
+def _parse_offer_results(soup: BeautifulSoup) -> list[dict]:
+    results: list[dict] = []
+
+    for li in _iter_serp_items(soup):
+        if not li.select_one("div.Organic_withOfferThumb"):
+            continue
+
+        title = li.select_one(".OrganicTitle-LinkText")
+        url = li.select_one("a.OrganicTitle-Link")
+        href = url.get("href") if url else None
+
         price_el = li.select_one(".EPriceGroup .EPriceGroup-Price .EPrice-Content")
         price = price_el.get("title") if price_el else None
 
         thumbnail_el = li.select_one(".EThumb img")
         thumbnail = thumbnail_el.get("src") if thumbnail_el else None
 
-        if title and hostname:
-            results.append({
-                "title": title.get_text(strip=True),
-                "hostname": hostname,
+        description_el = li.select_one("span.OrganicTextContentSpan")
+        description = _element_text(description_el) if description_el else None
+
+        if title and href:
+            entry: dict = {
+                "title": _element_text(title),
                 "href": href,
-                "rating": rating,
-                "reviews": reviews,
-                "delivery": delivery_container,
                 "price": price,
                 "thumbnail": thumbnail,
-            })
+            }
+            if description:
+                entry["description"] = description
+            results.append(entry)
 
     return results
 
-
-def _hostname_shop_fields(
-    products: list[dict],
-) -> tuple[str | None, str | None, str | None]:
-    rating = None
-    reviews = None
-    delivery = None
-    for product in products:
-        if rating is None:
-            rating = product.get("rating")
-        if reviews is None:
-            reviews = product.get("reviews")
-        if delivery is None:
-            delivery = product.get("delivery")
-        if rating is not None and reviews is not None and delivery is not None:
-            break
-    return rating, reviews, delivery
-
-
-def _hostname_group(hostname: str, products: list[dict]) -> dict:
-    rating, reviews, delivery = _hostname_shop_fields(products)
-    group: dict = {"hostname": hostname, "products": products}
-    if rating is not None:
-        group["rating"] = rating
-    if reviews is not None:
-        group["reviews"] = reviews
-    if delivery is not None:
-        group["delivery"] = delivery
-    return group
-
-
-def _group_by_hostname(products: list[dict]) -> list[dict]:
-    grouped: dict[str, list[dict]] = {}
-    for product in products:
-        hostname = product.get("hostname")
-        if not hostname:
-            continue
-        grouped.setdefault(hostname, []).append(product)
-
-    return [
-        _hostname_group(hostname, items)
-        for hostname, items in sorted(grouped.items())
-    ]
-
-
-def _summarize_results(results: list[dict]) -> tuple[int, int, int, int]:
-    hostnames = len(results)
-    products = 0
-    extracted = 0
-    non_extracted = 0
-
-    for group in results:
-        for product in group.get("products", []):
-            products += 1
-            if product.get("extracted"):
-                extracted += 1
-            else:
-                non_extracted += 1
-
-    return hostnames, products, extracted, non_extracted
-
-
-def _print_event_summary(event: dict) -> None:
-    event_type = event.get("type")
-
-    if event_type == "meta":
-        print(f"meta: query={event.get('query')!r}")
-        return
-
-    if event_type == "page":
-        hostnames, products, extracted, non_extracted = _summarize_results(event.get("results", []))
-        print(
-            f"page: "
-            f"hostnames={hostnames} "
-            f"products={products} "
-            f"extracted={extracted} "
-            f"non_extracted={non_extracted}"
-        )
-        return
-
-    if event_type == "done":
-        print("done")
-        return
-
-    print(f"{event_type}: {event}")
-
-
-def _write_response(event: dict) -> None:
-    with RESPONSE_JSON_PATH.open("w", encoding="utf-8") as file:
-        json.dump(event, file, ensure_ascii=False, indent=2)
-
-
-def _log_event(event: dict) -> None:
-    _write_response(event)
-
-
-async def search_yandex(query: str, region: str = "санкт-петербург") -> AsyncGenerator[list[dict], None]:
+async def search_yandex(
+    query: str,
+    region: str = "санкт-петербург",
+) -> AsyncGenerator[list[dict], None]:
     rewritten_query = rewrite_query(query, region)
-    _log_event({
-        "type": "meta",
-        "query": query,
-        "region": region,
-        "rewritten_query": rewritten_query,
-    })
-
     session = get_browser_session()
-    async for results in session.search(query, region):
-        _log_event({
-            "type": "page",
-            "results": _group_by_hostname(results),
-        })
-        yield results
-
-    _log_event({"type": "done"})
+    async for sites in session.search(query, region):
+        yield sites
 
 
 async def _main() -> None:
     await init_browser_session()
     try:
-        for i in range(4, 17):
-            query = f"айфон {i}"
-            try:
-                print(f"searching {query}")
-                async for results in search_yandex(query, region="санкт-петербург"):
-                    _print_event_summary({
-                        "type": "page",
-                        "results": _group_by_hostname(results),
-                    })
-                    print(f"found {len(results)} results...")
-                    for result in results:
-                        print(result)
-                        print("-" * 100)
-            except YandexCaptchaError as error:
-                print(error)
+        query = "айфон 17"
+        print(f"searching {query}")
+        async for sites in search_yandex(query, region="санкт-петербург"):
+            for site in sites:
+                print(
+                    f"{site['hostname']}: "
+                    f"{len(site.get('products', []))} products"
+                )
+    except YandexCaptchaError as error:
+        print(error)
     finally:
         await close_browser_session()
 

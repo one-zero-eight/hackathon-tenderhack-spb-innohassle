@@ -18,7 +18,12 @@ from src.api.parsers.cloak_browser import (
     new_pool_profile_dir,
     open_cloak_session,
 )
-from src.api.parsers.geocoder import resolve_ozon_city
+from src.api.parsers.geocoder import resolve_ozon_city, resolve_ozon_select_location
+from src.api.parsers.ozon.location import (
+    RESOLVE_SELECT_LOCATION_JS,
+    append_select_location,
+    lookup_ozon_select_location_key,
+)
 from src.api.parsers.ozon.composer_extract import (
     COMPOSER_HTTP_HEADERS,
     FETCH_COMPOSER_JS,
@@ -243,6 +248,7 @@ class OzonParser:
         self._cookies_path: Path | None = None
         self._cookies_session_invalid = False
         self._last_query = ""
+        self._select_location: str | None = None
 
     async def __aenter__(self) -> OzonParser:
         await self.start()
@@ -365,7 +371,7 @@ class OzonParser:
         path = f"/search/?text={quote(query)}&from_global=true"
         if page > 1:
             path += f"&page={page}"
-        return path
+        return append_select_location(path, self._select_location)
 
     def _current_composer_path(self) -> str | None:
         try:
@@ -503,28 +509,40 @@ class OzonParser:
             pass
         await self._sleep(0.15, 0.3)
 
-    async def _apply_delivery_city(self, city: str) -> None:
-        if city == "Москва":
-            return
-        logger.info("Ozon: setting delivery city to %r", city)
-        await self._goto(OZON_HOME, fast=False)
-        await self._dismiss_overlays()
+    async def _resolve_select_location_id(self, city: str, location_key: str | None) -> str:
+        static = lookup_ozon_select_location_key(location_key) or lookup_ozon_select_location_key(
+            city.strip().lower()
+        )
+        if static:
+            return static
+        if self._p is None:
+            return resolve_ozon_select_location(location_key)
         try:
-            address = self._p.locator(
-                '[data-widget="addressBookBar"], [data-widget="commonAddressBook"]'
-            ).first
-            await address.click(timeout=8000)
-            await self._sleep(0.3, 0.5)
-            field = self._p.locator(
-                'input[placeholder*="город"], input[placeholder*="Населен"], input[type="search"]'
-            ).first
-            await field.fill(city, timeout=5000)
-            await self._sleep(0.4, 0.7)
-            await self._p.get_by_text(city, exact=False).first.click(timeout=5000)
-            await self._sleep(0.5, 0.8)
-            await self._wait_serp_settled()
+            await self._ensure_ozon_home(fast=True)
+            resolved = await evaluate(self._p, RESOLVE_SELECT_LOCATION_JS, city)
+            if isinstance(resolved, str) and resolved:
+                logger.info("Ozon select_location resolved via API for %r: %s", city, resolved)
+                return resolved
         except Exception as exc:
-            logger.warning("Ozon failed to set delivery city %r: %s", city, exc)
+            logger.warning("Ozon select_location API lookup failed for %r: %s", city, exc)
+        return resolve_ozon_select_location(location_key)
+
+    async def _prepare_location(self, location: str | None) -> None:
+        city = resolve_ozon_city(location)
+        location_key = location.strip().lower() if location and location.strip() else None
+        self._select_location = await self._resolve_select_location_id(city, location_key)
+        logger.info(
+            "Ozon location %r -> select_location=%s (HTTP/SERP, no address picker)",
+            city,
+            self._select_location,
+        )
+        if not self._select_location:
+            return
+        prime_url = append_select_location(OZON_HOME, self._select_location)
+        try:
+            await self._goto(prime_url, fast=True, serp_settle=False)
+        except Exception as exc:
+            logger.warning("Ozon location prime navigation failed: %s", exc)
 
     async def _open_search_serp(
         self,
@@ -593,7 +611,7 @@ class OzonParser:
     async def search(self, query: str) -> None:
         logger.info("Поиск: %s", query)
         self._last_query = query
-        search_url = f"{OZON_HOME}search/?text={quote(query)}&from_global=true"
+        search_url = urljoin(OZON_HOME, self._search_path(query))
 
         if self.composer_search and not self.slow_mode:
             try:
@@ -722,7 +740,7 @@ class OzonParser:
         headers = {**COMPOSER_HTTP_HEADERS, "referer": referer}
         try:
             response = await self._context.request.get(
-                composer_api_url(path),
+                composer_api_url(path, select_location=self._select_location),
                 headers=headers,
                 timeout=20_000,
             )
@@ -835,7 +853,7 @@ class OzonParser:
                 yield {
                     "page": page_num,
                     "path": path,
-                    "composer_url": composer_api_url(path),
+                    "composer_url": composer_api_url(path, select_location=self._select_location),
                     "browser_url": self._p.url if self._p else None,
                     "data": payload,
                 }
@@ -1143,8 +1161,7 @@ class OzonParser:
         if fetch_details and target_count <= batch_size * 2:
             raise ValueError(f"Требуется n > 2*m: n={target_count}, m={batch_size}")
 
-        city = resolve_ozon_city(location)
-        await self._apply_delivery_city(city)
+        await self._prepare_location(location)
         await self.search(query)
         listing_items = await self.collect_products(target_count)
         listing_items = listing_items[skip:target_count]

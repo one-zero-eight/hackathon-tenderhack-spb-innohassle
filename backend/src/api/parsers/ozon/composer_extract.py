@@ -7,6 +7,7 @@ import logging
 from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlparse
 
+from src.api.parsers.ozon.location import OZON_SELECT_LOCATION_PARAM
 from src.api.parsers.ozon.titles import is_valid_ozon_product_title
 
 logger = logging.getLogger(__name__)
@@ -20,8 +21,11 @@ COMPOSER_HTTP_HEADERS = {
 }
 
 
-def composer_api_url(path: str) -> str:
-    return f"{COMPOSER_API_ENDPOINT}?url={quote(path, safe='')}"
+def composer_api_url(path: str, *, select_location: str | None = None) -> str:
+    url = f"{COMPOSER_API_ENDPOINT}?url={quote(path, safe='')}"
+    if select_location:
+        url += f"&{OZON_SELECT_LOCATION_PARAM}={quote(select_location, safe='')}"
+    return url
 
 
 def composer_path_strip_page(path: str) -> str:

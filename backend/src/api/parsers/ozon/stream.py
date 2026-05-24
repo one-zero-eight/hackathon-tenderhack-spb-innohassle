@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 
-from src.api.parsers.geocoder import resolve_ozon_city
 from src.api.parsers.ozon.models import ProductResult
 from src.api.parsers.ozon.parser import OzonParser
 from src.api.parsers.ozon.titles import pick_ozon_product_title
@@ -88,8 +87,7 @@ async def iter_ozon_search(
             yield pending
         return
 
-    city = resolve_ozon_city(location)
-    await parser._apply_delivery_city(city)
+    await parser._prepare_location(location)
     await parser.search(query)
 
     skipped = 0
@@ -140,8 +138,7 @@ async def iter_ozon_composer_raw(
         location,
     )
 
-    city = resolve_ozon_city(location)
-    await parser._apply_delivery_city(city)
+    await parser._prepare_location(location)
     await parser.search(query)
 
     async for page in parser.iter_composer_pages_until(target):

@@ -4,7 +4,7 @@ Location helpers for marketplace parsers.
 Resolves a known city/region name to:
   - Wildberries internal ``dest`` ID (negative integer used by search.wb.ru)
   - Yandex Market ``lr`` region ID (Yandex Geobase integer)
-  - Ozon delivery city label (for the address picker UI)
+  - Ozon delivery city label and ``select_location`` UUID (SERP / composer-api)
 
 The supported locations are intentionally static and shared between
 marketplaces. Unknown locations fall back to Moscow.
@@ -164,3 +164,23 @@ def resolve_ozon_city(location: str | None) -> str:
 
     logger.warning("Ozon city not found for %r, falling back to Moscow", location)
     return _OZON_DEFAULT_CITY
+
+
+def resolve_ozon_select_location(location: str | None) -> str:
+    """
+    Resolve ``select_location`` UUID for Ozon HTTP/SERP requests.
+
+    Uses static map for known aliases; unknown locations fall back to Moscow.
+    """
+    from src.api.parsers.ozon.location import DEFAULT_OZON_SELECT_LOCATION, lookup_ozon_select_location_key
+
+    key = _normalize_location(location)
+    resolved = lookup_ozon_select_location_key(key)
+    if resolved:
+        return resolved
+    if key is not None:
+        logger.warning(
+            "Ozon select_location not found for %r, falling back to Moscow",
+            location,
+        )
+    return DEFAULT_OZON_SELECT_LOCATION

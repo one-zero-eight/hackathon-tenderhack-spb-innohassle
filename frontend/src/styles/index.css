@@ -30,3 +30,37 @@
     background-position: 17px 0;
   }
 }
+
+.landing-page-content {
+  view-transition-name: landing-page-content;
+}
+
+::view-transition-old(landing-page-content) {
+  animation: landing-page-exit 0.45s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+::view-transition-new(landing-page-content) {
+  animation: landing-page-enter 0.45s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+@keyframes landing-page-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-1rem);
+  }
+}
+
+@keyframes landing-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

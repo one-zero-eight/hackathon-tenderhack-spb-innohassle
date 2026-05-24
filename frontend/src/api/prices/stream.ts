@@ -10,6 +10,8 @@ export type PriceSearchStreamParams = {
   limit?: number
   skip?: number
   bypassSpellchecker?: boolean
+  /** @default true */
+  bypassRelevanceFilter?: boolean
 }
 
 export type PriceSearchHandlers = {
@@ -91,6 +93,7 @@ export async function streamPriceSearch(params: PriceSearchStreamParams, handler
         skip: params.skip ?? 0,
         location: params.location ?? null,
         bypass_spellchecker: params.bypassSpellchecker ?? false,
+        bypass_relevance_filter: params.bypassRelevanceFilter ?? true,
       }),
       signal,
     })

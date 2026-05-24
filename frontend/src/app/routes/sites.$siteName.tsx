@@ -1,7 +1,9 @@
 import { Link, Outlet, createFileRoute, useRouterState } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { IoArrowBack, IoGridOutline, IoListOutline, IoSearch, IoDownloadOutline } from 'react-icons/io5'
-import MarketplaceLogoLink from '@/components/shared/MarketplaceLogoLink'
+import SiteTitle from '@/components/shared/SiteTitle'
+import { findSiteInYandexSearchCache } from '@/hooks/useYandexSearch'
+import { useQueryClient } from '@tanstack/react-query'
 import { ProductCard } from '@/components/shared/ProductCard'
 import PriceRangeSlider from '@/components/shared/PriceRangeSlider'
 import { ResultsSkeleton } from '@/components/shared/ResultsSkeleton'
@@ -130,8 +132,10 @@ function CategoryPage() {
   }, [locationParam, cityLocation, setCity])
 
   const location = locationParam !== undefined ? locationParam : cityLocation
+  const queryClient = useQueryClient()
   const { data: priceData, isLoading, isError } = usePriceSearch({ query: q, location })
-  const site = priceData?.sites.find((item) => item.slug === siteName)
+  const site = priceData?.sites.find((item) => item.slug === siteName) ?? findSiteInYandexSearchCache(queryClient, siteName, q, location)
+  const isExternal = site?.kind === 'other'
 
   if (isProductRoute) return <Outlet />
 
@@ -158,10 +162,10 @@ function CategoryPage() {
     )
   }
 
-  return <CategorySiteView key={`${siteName}-${q}`} site={site} q={q} location={location} />
+  return <CategorySiteView key={`${siteName}-${q}`} site={site} q={q} location={location} external={isExternal} />
 }
 
-function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; location: string }) {
+function CategorySiteView({ site, q, location, external = false }: { site: SiteResult; q: string; location: string; external?: boolean }) {
   const accent = siteAccent[site.kind]
   const availableMin = minProductPrice(site.products)
   const availableMax = maxProductPrice(site.products)
@@ -206,7 +210,7 @@ function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; 
             <Link to="/sites" search={{ q, location }} className="text-gray flex shrink-0 items-center hover:text-black" aria-label="Назад">
               <IoArrowBack size={20} />
             </Link>
-            <MarketplaceLogoLink site={site} imgClassName="h-5 w-auto shrink-0 sm:h-6" fallbackClassName="text-base font-semibold" />
+            <SiteTitle site={site} className="shrink-0" />
             <span className="text-gray shrink-0">/</span>
             <span className="min-w-0 truncate font-semibold text-black">{q || 'Все товары'}</span>
             <span className={cn('shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium', accent.badge)}>{products.length} товаров</span>
@@ -335,7 +339,7 @@ function CategorySiteView({ site, q, location }: { site: SiteResult; q: string; 
 
           <div className={view === 'grid' ? 'grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4' : 'flex flex-col gap-3'}>
             {products.map((product) => (
-              <ProductCard key={product.id} product={product} siteSlug={site.slug} query={q} location={location} layout={view === 'rows' ? 'row' : 'tile'} surface="white" bordered={true} />
+              <ProductCard key={product.id} product={product} siteSlug={site.slug} query={q} location={location} layout={view === 'rows' ? 'row' : 'tile'} surface="white" bordered={true} external={external} />
             ))}
             {products.length === 0 && <p className="text-gray col-span-full">Нет товаров по выбранным фильтрам.</p>}
           </div>

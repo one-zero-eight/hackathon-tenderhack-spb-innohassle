@@ -11,25 +11,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Yandex Search */
-        get: operations["yandex_search_yandex_search_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/yandex_search_extended": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Yandex Search Extended */
-        get: operations["yandex_search_extended_yandex_search_extended_get"];
+        /** Yandex Search Mock */
+        get: operations["yandex_search_mock_yandex_search_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -71,39 +54,7 @@ export type SchemaHttpValidationError = components['schemas']['HTTPValidationErr
 export type SchemaValidationError = components['schemas']['ValidationError'];
 export type $defs = Record<string, never>;
 export interface operations {
-    yandex_search_yandex_search_get: {
-        parameters: {
-            query: {
-                query: string;
-                region?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    yandex_search_extended_yandex_search_extended_get: {
+    yandex_search_mock_yandex_search_get: {
         parameters: {
             query: {
                 query: string;

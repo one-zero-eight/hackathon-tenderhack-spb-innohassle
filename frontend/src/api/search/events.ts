@@ -1,37 +1,21 @@
-/** NDJSON stream events — see search/AGENTS.md */
+/** NDJSON stream events — /yandex_search */
 
-export type SearchProductSnippet = {
-  extracted: false
+export type SearchProductItem = {
   title: string | null
+  href: string | null
+  price?: string | null
+  thumbnail?: string | null
+  description?: string | null
+}
+
+export type SearchShop = {
   hostname: string
   href: string | null
   rating?: string | null
   reviews?: string | null
   delivery?: string | null
-  price?: string | null
-  thumbnail?: string | null
-}
-
-export type SearchProductExtracted = {
-  extracted: true
-  hostname: string
-  href: string | null
-  name?: string | null
-  cost?: string | null
-  description?: string | null
-  characteristics?: Record<string, string> | null
-  title?: string | null
-  price?: string | null
-  thumbnail?: string | null
-}
-
-export type SearchStreamProduct = SearchProductSnippet | SearchProductExtracted
-
-export type SearchHostnameGroup = {
-  hostname: string
-  products: SearchStreamProduct[]
-  rating?: string | null
-  reviews?: string | null
+  products: SearchProductItem[]
+  favicon?: string | null
 }
 
 export type SearchMetaEvent = {
@@ -41,19 +25,19 @@ export type SearchMetaEvent = {
   rewritten_query: string
 }
 
-export type SearchPageEvent = {
-  type: 'page'
-  results: SearchHostnameGroup[]
+export type SearchDataEvent = {
+  type: 'data'
+  data: SearchShop[]
 }
 
 export type SearchDoneEvent = {
   type: 'done'
 }
 
-export type SearchStreamEvent = SearchMetaEvent | SearchPageEvent | SearchDoneEvent
+export type SearchStreamEvent = SearchMetaEvent | SearchDataEvent | SearchDoneEvent
 
 export function isSearchStreamEvent(value: unknown): value is SearchStreamEvent {
   if (!value || typeof value !== 'object' || !('type' in value)) return false
   const type = (value as { type: unknown }).type
-  return type === 'meta' || type === 'page' || type === 'done'
+  return type === 'meta' || type === 'data' || type === 'done'
 }

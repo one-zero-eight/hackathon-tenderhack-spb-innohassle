@@ -1,14 +1,14 @@
 import { Link, Outlet, createFileRoute, useNavigate, useRouterState } from '@tanstack/react-router'
 import { IoSearch, IoStar, IoArrowBack, IoDownloadOutline } from 'react-icons/io5'
 import CitySelect from '@/components/shared/CitySelect'
-import MarketplaceLogoLink from '@/components/shared/MarketplaceLogoLink'
+import SiteTitle from '@/components/shared/SiteTitle'
 import { ProductCard, ViewAllCard } from '@/components/shared/ProductCard'
 import { ResultsSkeleton } from '@/components/shared/ResultsSkeleton'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useCity } from '@/hooks/useCity'
-import { useYandexSearchExtended } from '@/hooks/useYandexSearchExtended'
+import { useYandexSearch } from '@/hooks/useYandexSearch'
 import { usePriceSearch, PRICE_SEARCH_LIMIT } from '@/hooks/usePriceSearch'
 import { cn } from '@/lib/cn'
 import { splitSiteResults } from '@/lib/mapSearchResults'
@@ -57,7 +57,7 @@ function SitesPage() {
   const effectiveQuery = priceData?.effectiveQuery ?? q.trim()
   const correction = priceData ? getQueryCorrection(q, priceData.fixedQuery, strict) : null
   const streamEnabled = hasQuery && q.trim().length > 0
-  const { sites: otherSiteResults, loading: otherLoading, error: otherError } = useYandexSearchExtended(q, location, streamEnabled)
+  const { sites: otherSiteResults, loading: otherLoading, error: otherError } = useYandexSearch(q, location, streamEnabled)
 
   useEffect(() => {
     setQuery(q)
@@ -226,29 +226,6 @@ function medianPrice(prices: number[]): number | null {
   return sorted[mid]
 }
 
-function otherSourceFaviconUrl(hostname: string): string {
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=128`
-}
-
-function SiteTitle({ site, className }: { site: SiteResult; className?: string }) {
-  const [faviconFailed, setFaviconFailed] = useState(false)
-
-  if (site.logo) {
-    return <MarketplaceLogoLink site={site} className={className} imgClassName={cn('w-auto object-contain object-left', site.kind === 'ozon' ? 'h-5 max-w-[120px] sm:h-6' : 'h-6 max-w-[160px] sm:h-7')} />
-  }
-
-  if (site.kind === 'other') {
-    return (
-      <div className={cn('flex min-w-0 items-center gap-2', className)}>
-        {!faviconFailed && <img src={otherSourceFaviconUrl(site.name)} alt="" aria-hidden onError={() => setFaviconFailed(true)} className="h-5 w-5 shrink-0 rounded-sm" />}
-        <h2 className="truncate text-xl font-semibold">{site.name}</h2>
-      </div>
-    )
-  }
-
-  return <h2 className="text-xl font-semibold">{site.name}</h2>
-}
-
 function SitePriceStat({ label, value, loading = false, className }: { label?: string; value?: number | null; loading?: boolean; className?: string }) {
   return (
     <div className={cn('flex shrink-0 flex-col items-center justify-center rounded-2xl bg-white px-3.5 py-2', className)}>
@@ -304,8 +281,10 @@ const SiteSection = memo(function SiteSection({
   const prices = pricedProducts.map((product) => product.price)
   const medianProductPrice = medianPrice(prices)
   const averageProductPrice = prices.length > 0 ? Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length) : null
-  const statsLoading = pricesLoading && (productLimit == null ? true : site.products.length < productLimit && !site.sourceComplete)
-  const showPriceStats = statsLoading || pricedProducts.length > 1
+  const statsLoading =
+    !external && pricesLoading && (productLimit == null ? true : site.products.length < productLimit && !site.sourceComplete)
+  const showPriceStats = external ? pricedProducts.length > 0 : statsLoading || pricedProducts.length > 1
+  const showViewAll = !external || site.products.length > 5
 
   if (site.error && site.products.length === 0) {
     return (
@@ -350,7 +329,7 @@ const SiteSection = memo(function SiteSection({
         {products.map((product) => (
           <ProductCard key={product.id} product={product} siteSlug={site.slug} query={query} location={location} layout="carousel" external={external} />
         ))}
-        {!external && <ViewAllCard siteSlug={site.slug} query={query} location={location} layout="carousel" compact />}
+        {showViewAll && <ViewAllCard siteSlug={site.slug} query={query} location={location} layout="carousel" compact />}
       </div>
     </section>
   )

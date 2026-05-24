@@ -26,6 +26,8 @@ services:
         environment:
             - VITE_DEV_SERVER_HOST=0.0.0.0
             - VITE_DEV_PROXY_TARGET=http://api:8000
+            # - VITE_DEV_PROXY_TARGET=https://tenderhack.dofi4ka.ru
+            # - VITE_DEV_PROXY_TARGET=http://host.docker.internal:8000
         networks:
             - app_network
 

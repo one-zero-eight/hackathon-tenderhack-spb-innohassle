@@ -1,4 +1,3 @@
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import CitySelect from '@/components/shared/CitySelect'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
@@ -8,10 +7,11 @@ import { useYandexSuggest } from '@/hooks/useYandexSuggest'
 import { cn } from '@/lib/cn'
 import { getCityLocation } from '@/lib/geo'
 import { pickRandomSearchExamples, pickRandomSearchPlaceholder } from '@/lib/searchExamples'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
 import { IoClose, IoSearch, IoTimeOutline } from 'react-icons/io5'
 
-export const Route = createFileRoute('/search')({
+export const Route = createFileRoute('/_landing/search')({
   component: SearchPage,
 })
 
@@ -47,10 +47,7 @@ function SearchPage() {
   }
 
   return (
-    <div className="from-pale-blue relative min-h-screen overflow-hidden via-white to-white">
-      <div aria-hidden className="bg-main-blue/10 pointer-events-none absolute -top-24 left-1/2 h-72 w-xl -translate-x-1/2 rounded-full blur-3xl" />
-      <div aria-hidden className="bg-orange/10 pointer-events-none absolute top-40 -right-20 h-56 w-56 rounded-full blur-3xl" />
-
+    <div className="landing-page-content relative min-h-screen overflow-hidden">
       <div className="absolute top-4 right-4 z-10 sm:top-6 sm:right-6">
         <CitySelect className="rounded-xl bg-white/80 backdrop-blur-sm" />
       </div>
@@ -110,7 +107,7 @@ function SearchPage() {
           <div className="mt-6 flex flex-col items-center gap-3">
             <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
               {quickSearches.map((item) => (
-                <Link key={item} to="/sites" search={{ q: item, location: getCityLocation(city) }} className="text-main-blue text-sm underline underline-offset-2 hover:opacity-80">
+                <Link key={item} to="/sites" search={{ q: item, location: getCityLocation(city) }} className="text-main-blue text-sm underline-offset-2 hover:underline hover:opacity-80">
                   {item}
                 </Link>
               ))}

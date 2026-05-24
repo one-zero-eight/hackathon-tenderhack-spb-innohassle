@@ -50,10 +50,44 @@ export interface components {
              */
             bypass_spellchecker: boolean;
             /**
+             * Bypass Relevance Filter
+             * @default false
+             */
+            bypass_relevance_filter: boolean;
+            /**
+             * Relevance Quality
+             * @description Controls the relevance filter accuracy/speed trade-off. "high" (default) uses chain-of-thought reasoning per product — more accurate. "low" returns a flat boolean list — faster, fewer output tokens.
+             * @default high
+             * @enum {string}
+             */
+            relevance_quality: PriceSearchRequestRelevance_quality;
+            /**
              * Location
              * @description City or region for regional pricing on WB, Yandex Market, and Ozon. Defaults to Moscow.
              */
             location?: string | null;
+            /**
+             * Ozon Composer Raw
+             * @description If true, Ozon is loaded via composer-api HTTP (browser session) and parsed on this backend. If null, uses ozon_settings.composer_raw.
+             */
+            ozon_composer_raw?: boolean | null;
+            /**
+             * Include Ozon Composer Data
+             * @description Also stream raw composer JSON as type=ozon_composer (debug; large payloads).
+             * @default false
+             */
+            include_ozon_composer_data: boolean;
+            /**
+             * Wb Search Api Raw
+             * @description If true, Wildberries uses search.wb.ru via CloakBrowser HTTP and parses on this backend. If null, uses wildberries_settings.search_api_raw.
+             */
+            wb_search_api_raw?: boolean | null;
+            /**
+             * Include Wb Search Api Data
+             * @description Also stream raw search.wb.ru JSON as type=wb_search (debug).
+             * @default false
+             */
+            include_wb_search_api_data: boolean;
         };
         /** ValidationError */
         ValidationError: {
@@ -109,4 +143,8 @@ export interface operations {
             };
         };
     };
+}
+export enum PriceSearchRequestRelevance_quality {
+    high = "high",
+    low = "low"
 }

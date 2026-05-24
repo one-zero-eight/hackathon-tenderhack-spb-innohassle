@@ -1,4 +1,4 @@
-import { isSearchStreamEvent, type SearchStreamEvent } from './events'
+import { isSearchStreamEvent, type SearchDoneEvent, type SearchStreamEvent } from './events'
 
 export const SEARCH_API_BASE = import.meta.env.VITE_SEARCH_API_URL ?? '/search-api'
 
@@ -10,13 +10,13 @@ export type YandexSearchParams = {
 export type YandexSearchHandlers = {
   onEvent?: (event: SearchStreamEvent) => void
   onMeta?: (event: Extract<SearchStreamEvent, { type: 'meta' }>) => void
-  onPage?: (event: Extract<SearchStreamEvent, { type: 'page' }>) => void
-  onDone?: () => void
+  onData?: (event: Extract<SearchStreamEvent, { type: 'data' }>) => void
+  onDone?: (event: SearchDoneEvent) => void
   onError?: (error: unknown) => void
 }
 
-function buildSearchUrl(path: '/yandex_search' | '/yandex_search_extended', params: YandexSearchParams): string {
-  const url = new URL(`${SEARCH_API_BASE}${path}`, window.location.origin)
+function buildSearchUrl(params: YandexSearchParams): string {
+  const url = new URL(`${SEARCH_API_BASE}/yandex_search`, window.location.origin)
   url.searchParams.set('query', params.query.trim())
   if (params.region?.trim()) {
     url.searchParams.set('region', params.region.trim())
@@ -60,30 +60,23 @@ async function readNdjsonStream(response: Response, handlers: YandexSearchHandle
       handlers.onEvent?.(parsed)
 
       if (parsed.type === 'meta') handlers.onMeta?.(parsed)
-      if (parsed.type === 'page') handlers.onPage?.(parsed)
+      if (parsed.type === 'data') handlers.onData?.(parsed)
       if (parsed.type === 'done') {
-        handlers.onDone?.()
+        handlers.onDone?.(parsed)
         return
       }
     }
   }
 
-  handlers.onDone?.()
+  handlers.onDone?.({ type: 'done' })
 }
 
 export async function streamYandexSearch(params: YandexSearchParams, handlers: YandexSearchHandlers = {}, signal?: AbortSignal): Promise<void> {
   try {
-    const response = await fetch(buildSearchUrl('/yandex_search', params), { signal })
-    await readNdjsonStream(response, handlers, signal)
-  } catch (error) {
-    handlers.onError?.(error)
-    throw error
-  }
-}
-
-export async function streamYandexSearchExtended(params: YandexSearchParams, handlers: YandexSearchHandlers = {}, signal?: AbortSignal): Promise<void> {
-  try {
-    const response = await fetch(buildSearchUrl('/yandex_search_extended', params), { signal })
+    const response = await fetch(buildSearchUrl(params), {
+      headers: { Accept: 'application/x-ndjson' },
+      signal,
+    })
     await readNdjsonStream(response, handlers, signal)
   } catch (error) {
     handlers.onError?.(error)

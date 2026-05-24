@@ -10,9 +10,10 @@
 
 import { Route as rootRouteImport } from './routes/__root';
 import { Route as SitesRouteImport } from './routes/sites';
-import { Route as SearchRouteImport } from './routes/search';
-import { Route as IndexRouteImport } from './routes/index';
+import { Route as LandingRouteImport } from './routes/_landing';
+import { Route as LandingIndexRouteImport } from './routes/_landing/index';
 import { Route as SitesSiteNameRouteImport } from './routes/sites.$siteName';
+import { Route as LandingSearchRouteImport } from './routes/_landing/search';
 import { Route as SitesSiteNameProductIdRouteImport } from './routes/sites.$siteName.$productId';
 
 const SitesRoute = SitesRouteImport.update({
@@ -20,20 +21,24 @@ const SitesRoute = SitesRouteImport.update({
   path: '/sites',
   getParentRoute: () => rootRouteImport,
 } as any);
-const SearchRoute = SearchRouteImport.update({
-  id: '/search',
-  path: '/search',
+const LandingRoute = LandingRouteImport.update({
+  id: '/_landing',
   getParentRoute: () => rootRouteImport,
 } as any);
-const IndexRoute = IndexRouteImport.update({
+const LandingIndexRoute = LandingIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => LandingRoute,
 } as any);
 const SitesSiteNameRoute = SitesSiteNameRouteImport.update({
   id: '/$siteName',
   path: '/$siteName',
   getParentRoute: () => SitesRoute,
+} as any);
+const LandingSearchRoute = LandingSearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => LandingRoute,
 } as any);
 const SitesSiteNameProductIdRoute = SitesSiteNameProductIdRouteImport.update({
   id: '/$productId',
@@ -42,54 +47,55 @@ const SitesSiteNameProductIdRoute = SitesSiteNameProductIdRouteImport.update({
 } as any);
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute;
-  '/search': typeof SearchRoute;
   '/sites': typeof SitesRouteWithChildren;
+  '/search': typeof LandingSearchRoute;
   '/sites/$siteName': typeof SitesSiteNameRouteWithChildren;
+  '/': typeof LandingIndexRoute;
   '/sites/$siteName/$productId': typeof SitesSiteNameProductIdRoute;
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute;
-  '/search': typeof SearchRoute;
   '/sites': typeof SitesRouteWithChildren;
+  '/search': typeof LandingSearchRoute;
   '/sites/$siteName': typeof SitesSiteNameRouteWithChildren;
+  '/': typeof LandingIndexRoute;
   '/sites/$siteName/$productId': typeof SitesSiteNameProductIdRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
-  '/': typeof IndexRoute;
-  '/search': typeof SearchRoute;
+  '/_landing': typeof LandingRouteWithChildren;
   '/sites': typeof SitesRouteWithChildren;
+  '/_landing/search': typeof LandingSearchRoute;
   '/sites/$siteName': typeof SitesSiteNameRouteWithChildren;
+  '/_landing/': typeof LandingIndexRoute;
   '/sites/$siteName/$productId': typeof SitesSiteNameProductIdRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
-    | '/'
-    | '/search'
     | '/sites'
+    | '/search'
     | '/sites/$siteName'
+    | '/'
     | '/sites/$siteName/$productId';
   fileRoutesByTo: FileRoutesByTo;
   to:
-    | '/'
-    | '/search'
     | '/sites'
+    | '/search'
     | '/sites/$siteName'
+    | '/'
     | '/sites/$siteName/$productId';
   id:
     | '__root__'
-    | '/'
-    | '/search'
+    | '/_landing'
     | '/sites'
+    | '/_landing/search'
     | '/sites/$siteName'
+    | '/_landing/'
     | '/sites/$siteName/$productId';
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute;
-  SearchRoute: typeof SearchRoute;
+  LandingRoute: typeof LandingRouteWithChildren;
   SitesRoute: typeof SitesRouteWithChildren;
 }
 
@@ -102,19 +108,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SitesRouteImport;
       parentRoute: typeof rootRouteImport;
     };
-    '/search': {
-      id: '/search';
-      path: '/search';
-      fullPath: '/search';
-      preLoaderRoute: typeof SearchRouteImport;
+    '/_landing': {
+      id: '/_landing';
+      path: '';
+      fullPath: '';
+      preLoaderRoute: typeof LandingRouteImport;
       parentRoute: typeof rootRouteImport;
     };
-    '/': {
-      id: '/';
+    '/_landing/': {
+      id: '/_landing/';
       path: '/';
       fullPath: '/';
-      preLoaderRoute: typeof IndexRouteImport;
-      parentRoute: typeof rootRouteImport;
+      preLoaderRoute: typeof LandingIndexRouteImport;
+      parentRoute: typeof LandingRoute;
     };
     '/sites/$siteName': {
       id: '/sites/$siteName';
@@ -122,6 +128,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/sites/$siteName';
       preLoaderRoute: typeof SitesSiteNameRouteImport;
       parentRoute: typeof SitesRoute;
+    };
+    '/_landing/search': {
+      id: '/_landing/search';
+      path: '/search';
+      fullPath: '/search';
+      preLoaderRoute: typeof LandingSearchRouteImport;
+      parentRoute: typeof LandingRoute;
     };
     '/sites/$siteName/$productId': {
       id: '/sites/$siteName/$productId';
@@ -132,6 +145,19 @@ declare module '@tanstack/react-router' {
     };
   }
 }
+
+interface LandingRouteChildren {
+  LandingSearchRoute: typeof LandingSearchRoute;
+  LandingIndexRoute: typeof LandingIndexRoute;
+}
+
+const LandingRouteChildren: LandingRouteChildren = {
+  LandingSearchRoute: LandingSearchRoute,
+  LandingIndexRoute: LandingIndexRoute,
+};
+
+const LandingRouteWithChildren =
+  LandingRoute._addFileChildren(LandingRouteChildren);
 
 interface SitesSiteNameRouteChildren {
   SitesSiteNameProductIdRoute: typeof SitesSiteNameProductIdRoute;
@@ -156,8 +182,7 @@ const SitesRouteChildren: SitesRouteChildren = {
 const SitesRouteWithChildren = SitesRoute._addFileChildren(SitesRouteChildren);
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  SearchRoute: SearchRoute,
+  LandingRoute: LandingRouteWithChildren,
   SitesRoute: SitesRouteWithChildren,
 };
 export const routeTree = rootRouteImport

@@ -1,4 +1,4 @@
-import type { SearchHostnameGroup, SearchStreamProduct } from '@/api/search/events'
+import type { SearchShop } from '@/api/search/events'
 import { normalizeProductImageUrl } from '@/lib/normalizeProductImageUrl'
 import type { Product, SiteResult } from '@/lib/searchResults'
 
@@ -33,56 +33,37 @@ function parseRatingText(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function pickSiteMeta(group: SearchHostnameGroup): Pick<SiteResult, 'rating' | 'reviewsLabel'> {
-  const groupRating = parseRatingText(group.rating)
-  const groupReviews = group.reviews?.trim()
-  if (groupRating != null || groupReviews) {
-    return { rating: groupRating ?? undefined, reviewsLabel: groupReviews || undefined }
-  }
-
-  for (const product of group.products) {
-    if (!product.extracted) {
-      const rating = parseRatingText(product.rating)
-      const reviewsLabel = product.reviews?.trim()
-      if (rating != null || reviewsLabel) {
-        return { rating: rating ?? undefined, reviewsLabel: reviewsLabel || undefined }
-      }
-    }
-  }
-
-  return {}
-}
-
-function mapStreamProduct(product: SearchStreamProduct, slug: string, index: number): Product | null {
+function mapStreamProduct(shop: SearchShop, product: SearchShop['products'][number], index: number): Product | null {
+  const slug = slugifyHostname(shop.hostname)
   const href = product.href ?? undefined
-  const name = product.extracted ? (product.name ?? product.title) : product.title
-  const priceText = product.extracted ? (product.cost ?? product.price) : product.price
-  const price = parsePriceText(priceText)
-  const trimmedName = name?.trim()
-
+  const trimmedName = product.title?.trim()
   if (!trimmedName) return null
 
   return {
     id: productId(slug, href, index),
     name: trimmedName,
-    price: price ?? 0,
+    price: parsePriceText(product.price) ?? 0,
     url: href ?? null,
     imageUrl: normalizeProductImageUrl(product.thumbnail),
   }
 }
 
-export function mapStreamSearchResults(groups: SearchHostnameGroup[]): SiteResult[] {
-  return groups
-    .map((group) => {
-      const slug = slugifyHostname(group.hostname)
-      const products = group.products.map((product, index) => mapStreamProduct(product, slug, index)).filter((product): product is Product => product !== null)
+export function mapStreamSearchResults(shops: SearchShop[]): SiteResult[] {
+  return shops
+    .map((shop) => {
+      const slug = slugifyHostname(shop.hostname)
+      const products = shop.products.map((product, index) => mapStreamProduct(shop, product, index)).filter((product): product is Product => product !== null)
+      const rating = parseRatingText(shop.rating)
+      const reviewsLabel = shop.reviews?.trim()
 
       return {
         slug,
-        name: group.hostname,
+        name: shop.hostname,
         kind: 'other' as const,
         products,
-        ...pickSiteMeta(group),
+        logo: shop.favicon ? normalizeProductImageUrl(shop.favicon) ?? shop.favicon : undefined,
+        rating: rating ?? undefined,
+        reviewsLabel: reviewsLabel || undefined,
       }
     })
     .filter((site) => site.products.length > 0)

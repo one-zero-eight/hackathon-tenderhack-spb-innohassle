@@ -3,7 +3,7 @@ import { type PriceSearchData } from '@/lib/mapSearchResults'
 import { createPriceSearchMapper } from '@/lib/priceSearchMapper'
 import type { SiteResult } from '@/lib/searchResults'
 import { useQuery, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export const PRICE_SEARCH_LIMIT = 100
 export const PRICE_SEARCH_STALE_MS = 5 * 60 * 1000
@@ -16,6 +16,7 @@ export type PriceSearchParams = {
   limit?: number
   skip?: number
   bypassSpellchecker?: boolean
+  bypassRelevanceFilter?: boolean
 }
 
 export type { PriceSearchData }
@@ -148,8 +149,15 @@ function acquirePriceSearchStream(params: PriceSearchParams, queryClient: QueryC
   }
 }
 
-export function priceSearchQueryKey({ query, location, limit = PRICE_SEARCH_LIMIT, skip = 0, bypassSpellchecker = false }: PriceSearchParams) {
-  return ['price-search', query.trim(), location ?? '', limit, skip, bypassSpellchecker] as const
+export function priceSearchQueryKey({
+  query,
+  location,
+  limit = PRICE_SEARCH_LIMIT,
+  skip = 0,
+  bypassSpellchecker = false,
+  bypassRelevanceFilter = true,
+}: PriceSearchParams) {
+  return ['price-search', query.trim(), location ?? '', limit, skip, bypassSpellchecker, bypassRelevanceFilter] as const
 }
 
 export function findSiteInPriceSearchCache(queryClient: QueryClient, siteSlug: string, query: string, location?: string | null): SiteResult | undefined {
@@ -179,8 +187,6 @@ function isFreshPriceSearchCache(queryClient: QueryClient, queryKey: ReturnType<
 
 export function usePriceSearch(params: PriceSearchParams, enabled = true) {
   const queryClient = useQueryClient()
-  const queryClientRef = useRef(queryClient)
-  queryClientRef.current = queryClient
   const trimmed = params.query.trim()
   const active = enabled && trimmed.length > 0
   const queryKey = priceSearchQueryKey(params)
@@ -192,10 +198,17 @@ export function usePriceSearch(params: PriceSearchParams, enabled = true) {
   const [error, setError] = useState<unknown>(null)
 
   useEffect(() => {
-    const streamParams: PriceSearchParams = { query: trimmed, location, limit, skip, bypassSpellchecker }
+    const streamParams: PriceSearchParams = {
+      query: trimmed,
+      location,
+      limit,
+      skip,
+      bypassSpellchecker,
+      bypassRelevanceFilter: params.bypassRelevanceFilter ?? true,
+    }
     const streamQueryKey = priceSearchQueryKey(streamParams)
     const streamKey = queryKeyId(streamQueryKey)
-    const client = queryClientRef.current
+    const client = queryClient
 
     if (!active) return
 
@@ -249,7 +262,7 @@ export function usePriceSearch(params: PriceSearchParams, enabled = true) {
       cancelled = true
       release()
     }
-  }, [active, bypassSpellchecker, limit, location, skip, trimmed])
+  }, [active, bypassSpellchecker, limit, location, params.bypassRelevanceFilter, queryClient, skip, trimmed])
 
   const query = useQuery({
     queryKey,
@@ -276,9 +289,9 @@ export function useSiteFromSearch(siteSlug: string, params: PriceSearchParams): 
 
 export function useProductFromSearch(siteSlug: string, productId: string, params: PriceSearchParams) {
   const queryClient = useQueryClient()
+  const site = useSiteFromSearch(siteSlug, params)
   const cached = findProductInPriceSearchCache(queryClient, siteSlug, productId, params.query, params.location)
   if (cached) return cached
-  const site = useSiteFromSearch(siteSlug, params)
   if (!site) return null
   const product = site.products.find((item) => item.id === productId)
   if (!product) return null

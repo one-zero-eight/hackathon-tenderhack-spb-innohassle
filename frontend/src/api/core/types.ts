@@ -144,7 +144,4 @@ export interface operations {
         };
     };
 }
-export enum PriceSearchRequestRelevance_quality {
-    high = "high",
-    low = "low"
-}
+export type PriceSearchRequestRelevance_quality = "high" | "low";
